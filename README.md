@@ -35,3 +35,29 @@ docker exec -it barman bash
 ## 通过 Tailscale 连接
 
 Barman 容器会加入你的 Tailscale 网络，可以直接使用宿主机的 Tailscale IP 或 hostname 连接 PostgreSQL。
+
+## PostgreSQL 交互式命令行
+
+**直接进入 psql（推荐）：**
+
+```bash
+docker exec -it postgres psql -U postgres
+```
+
+**先进容器再执行：**
+
+```bash
+docker exec -it postgres bash
+psql -U postgres
+```
+
+**连接到特定数据库：**
+
+```bash
+docker exec -it postgres psql -U postgres -d your_database
+```
+
+**常用参数：**
+- `-U postgres`: 用户名
+- `-d dbname`: 指定数据库
+- `-h hostname`: 主机
