@@ -35,14 +35,18 @@ docker compose up -d
 在 `barman/` 目录下创建 `.env` 文件：
 
 ```bash
-TS_AUTHKEY=tskey-auth-xxxxx
+cp .env.example .env
+vim .env
 ```
 
-获取 Tailscale auth key: https://login.tailscale.com/admin/settings/keys
+> 获取 Tailscale auth key: https://login.tailscale.com/admin/settings/keys
+
+启动 Barman 并配置 Postgres 连接密码：
 
 ```bash
 cd barman
 docker compose up -d
+docker exec -it barman setup-pgpass.sh
 ```
 
 Barman 容器会加入你的 Tailscale 网络，通过宿主机的 Tailscale hostname 连接 PostgreSQL。

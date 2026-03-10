@@ -24,9 +24,13 @@ services:
         network_mode: "service:tailscale"
         depends_on:
             - tailscale
+        environment:
+            - PG_HOST=${PG_HOST}
+            - BARMAN_PASSWORD=${BARMAN_PASSWORD}
+            - STREAMING_BARMAN_PASSWORD=${STREAMING_BARMAN_PASSWORD}
         volumes:
             - barman-data:/var/lib/barman
-            - barman-config:/etc/barman.d
+            - ./config:/etc/barman.d
 
 networks:
     barman-net:
