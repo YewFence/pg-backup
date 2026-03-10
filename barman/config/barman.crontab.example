@@ -1,0 +1,15 @@
+# Barman 定时任务配置示例
+# 复制此文件为 barman.crontab 并根据需要修改
+# 格式: 分 时 日 月 周 命令
+#
+# 维护任务：每分钟执行一次，负责 WAL 归档和清理过期备份
+* * * * * /usr/bin/barman -q cron
+
+# 基础备份：每天凌晨 2 点创建一个完整备份
+0 2 * * * /usr/bin/barman backup streaming-backup-server
+
+# 可选：每周日凌晨 3 点验证最新备份的完整性
+# 0 3 * * 0 /usr/bin/barman verify-backup streaming-backup-server latest
+
+# 可选：每月 1 号凌晨 4 点生成备份清单
+# 0 4 1 * * /usr/bin/barman generate-manifest streaming-backup-server latest
