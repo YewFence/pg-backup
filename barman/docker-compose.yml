@@ -1,0 +1,38 @@
+services:
+    tailscale:
+        image: tailscale/tailscale:latest
+        container_name: barman-tailscale
+        hostname: barman
+        restart: unless-stopped
+        environment:
+            - TS_AUTHKEY=${TS_AUTHKEY}
+            - TS_STATE_DIR=/var/lib/tailscale
+            - TS_USERSPACE=false
+        volumes:
+            - tailscale-state:/var/lib/tailscale
+            - /dev/net/tun:/dev/net/tun
+        cap_add:
+            - NET_ADMIN
+            - SYS_MODULE
+        networks:
+            - barman-net
+
+    barman:
+        build: .
+        container_name: barman
+        restart: unless-stopped
+        network_mode: "service:tailscale"
+        depends_on:
+            - tailscale
+        volumes:
+            - barman-data:/var/lib/barman
+            - barman-config:/etc/barman.d
+
+networks:
+    barman-net:
+        driver: bridge
+
+volumes:
+    tailscale-state:
+    barman-data:
+    barman-config:
