@@ -41,12 +41,16 @@ vim .env
 
 > 获取 Tailscale auth key: https://login.tailscale.com/admin/settings/keys
 
-启动 Barman 并配置 Postgres 连接密码：
+编辑连接配置文件
+```bash
+cp config/streaming-backup-server.conf.example config/streaming-backup-server.conf
+vim config/streaming-backup-server.conf
+```
+启动 Barman：
 
 ```bash
 cd barman
 docker compose up -d
-docker exec -it barman setup-pgpass.sh
 ```
 
 Barman 容器会加入你的 Tailscale 网络，通过宿主机的 Tailscale hostname 连接 PostgreSQL。
