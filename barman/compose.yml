@@ -30,7 +30,7 @@ services:
             - BARMAN_PASSWORD=${BARMAN_PASSWORD}
             - STREAMING_BARMAN_PASSWORD=${STREAMING_BARMAN_PASSWORD}
         volumes:
-            - ./barman-data:/var/lib/barman
+            - barman-data:/var/lib/barman
             - ./recover:/recover
             - ./config:/etc/barman.d
 
@@ -52,3 +52,4 @@ networks:
 
 volumes:
     tailscale-state:
+    barman-data:
