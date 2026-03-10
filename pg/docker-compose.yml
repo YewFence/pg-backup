@@ -3,6 +3,7 @@ services:
     image: postgres:17
     container_name: postgres
     restart: unless-stopped
+    env_file: .env
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
