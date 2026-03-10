@@ -61,3 +61,9 @@ docker exec -it postgres psql -U postgres -d your_database
 - `-U postgres`: 用户名
 - `-d dbname`: 指定数据库
 - `-h hostname`: 主机
+
+## PG 默认配置导出 
+```bash
+docker exec postgres cat /var/lib/postgresql/data/postgresql.conf > postgresql.conf
+docker exec postgres cat /var/lib/postgresql/data/pg_hba.conf > pg_hba.conf
+```
