@@ -20,6 +20,7 @@ services:
     barman:
         build: .
         container_name: barman
+        init: true
         restart: unless-stopped
         network_mode: "service:tailscale"
         depends_on:
