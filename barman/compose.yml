@@ -30,8 +30,21 @@ services:
             - BARMAN_PASSWORD=${BARMAN_PASSWORD}
             - STREAMING_BARMAN_PASSWORD=${STREAMING_BARMAN_PASSWORD}
         volumes:
-            - barman-data:/var/lib/barman
+            - ./barman-data:/var/lib/barman
+            - ./recover:/recover
             - ./config:/etc/barman.d
+
+    # 恢复验证用 PG，平时不启动
+    pg-recovered:
+        image: postgres:17
+        container_name: pg-recovered
+        profiles: ["recovery"]
+        ports:
+            - "5433:5432"
+        volumes:
+            - ./recover:/var/lib/postgresql/data
+        networks:
+            - barman-net
 
 networks:
     barman-net:
@@ -39,5 +52,3 @@ networks:
 
 volumes:
     tailscale-state:
-    barman-data:
-    barman-config:

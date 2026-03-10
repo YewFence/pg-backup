@@ -11,12 +11,9 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - ./pgdata:/var/lib/postgresql/data
       - ./initdb:/docker-entrypoint-initdb.d
       - ./pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
       - ./postgresql.conf:/etc/postgresql/postgresql.conf:ro
     command: postgres -c config_file=/etc/postgresql/postgresql.conf -c hba_file=/etc/postgresql/pg_hba.conf
 
-
-volumes:
-  pgdata:

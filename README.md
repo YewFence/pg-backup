@@ -2,6 +2,7 @@
 
 > 这是一个**测试项目**，用于测试 [Barman](https://pgbarman.org/) 对 PostgreSQL 数据库的备份与恢复功能。
 > Barman 客户端通过 Tailscale 组网连接到 PostgreSQL 服务器。
+> 此处我们假设宿主机 + pg/ 与 barman/ 目录在不同机器上，且宿主机已安装并登录 Tailscale 作为 Tailscale 节点，barman 使用 Tailscale Docker 作为 Tailscale 节点。
 
 ## 项目结构
 
@@ -107,6 +108,35 @@ docker exec barman barman replication-status streaming-backup-server
 # 恢复到指定时间点（示例）
 docker exec barman barman recover streaming-backup-server latest /var/lib/barman/recover --target-time "2026-03-10 12:00:00"
 ```
+
+### 异地恢复验证
+
+在 Barman 本机恢复备份并启动一个临时 PG 来验证数据完整性。
+
+```bash
+# 1. 恢复最新备份到共享卷
+docker exec barman barman recover streaming-backup-server latest /recover
+
+# 2. 拉起验证用 PG（端口 5433，profile 控制，平时不启动）
+docker compose --profile recovery up -d pg-recovered
+
+# 3. 验证数据
+docker exec pg-recovered psql -U postgres -c '\dt'
+
+# 从 barman 容器直连（都在 barman-net 上）
+docker exec barman psql -h pg-recovered -U postgres -c "SELECT count(*) FROM your_table;"
+
+# 或从宿主机
+psql -h localhost -p 5433 -U postgres
+
+# 4. 验证完毕，关掉验证 PG
+docker compose --profile recovery down
+
+# 如需重新恢复，先清理卷再重来
+docker volume rm barman_pg-recover
+```
+
+> PITR（恢复到指定时间点）：在 recover 命令后加 `--target-time "2026-03-10 14:30:00"`
 
 ### PostgreSQL 配置导出
 

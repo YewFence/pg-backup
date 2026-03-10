@@ -20,8 +20,8 @@ RUN curl -fsSL "https://github.com/aptible/supercronic/releases/download/${SUPER
     -o /usr/local/bin/supercronic \
     && chmod +x /usr/local/bin/supercronic
 
-RUN mkdir -p /var/lib/barman && \
-    chown -R barman:barman /var/lib/barman
+RUN mkdir -p /var/lib/barman /recover && \
+    chown -R barman:barman /var/lib/barman /recover
 
 COPY setup-pgpass.sh /usr/local/bin/setup-pgpass.sh
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
