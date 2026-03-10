@@ -1,10 +1,38 @@
-> 这是一个 Barman 测试项目，使用 Tailscale 连接 PostgreSQL 数据库。
+# pg-backup
 
-# Barman with Tailscale Setup
+> 这是一个**测试项目**，用于测试 [Barman](https://pgbarman.org/) 对 PostgreSQL 数据库的备份与恢复功能。
+> Barman 客户端通过 Tailscale 组网连接到 PostgreSQL 服务器。
 
-## 环境变量
+## 项目结构
 
-创建 `.env` 文件：
+```
+.
+├── pg/                         # PostgreSQL 17 数据库（被备份的目标）
+│   ├── docker-compose.yml
+│   ├── postgresql.conf
+│   ├── pg_hba.conf
+│   └── initdb/
+├── barman/                     # Barman 客户端（备份工具）
+│   ├── Dockerfile
+│   ├── docker-compose.yml      # Barman + Tailscale sidecar
+│   ├── config/                 # 挂载到 /etc/barman.d
+│   │   └── streaming-backup-server.conf
+│   └── .env                    # Tailscale auth key（不提交）
+└── README.md
+```
+
+## 快速开始
+
+### 1. 启动 PostgreSQL
+
+```bash
+cd pg
+docker compose up -d
+```
+
+### 2. 启动 Barman
+
+在 `barman/` 目录下创建 `.env` 文件：
 
 ```bash
 TS_AUTHKEY=tskey-auth-xxxxx
@@ -12,58 +40,26 @@ TS_AUTHKEY=tskey-auth-xxxxx
 
 获取 Tailscale auth key: https://login.tailscale.com/admin/settings/keys
 
-## 启动
-
 ```bash
-docker compose -f docker-compose.barman.yml up -d
+cd barman
+docker compose up -d
 ```
 
-## 配置 Barman
+Barman 容器会加入你的 Tailscale 网络，通过宿主机的 Tailscale hostname 连接 PostgreSQL。
 
-进入容器：
-
-```bash
-docker exec -it barman bash
-```
-
-配置 PostgreSQL 连接（在容器内）：
+## 常用命令
 
 ```bash
-# 编辑 /etc/barman.conf 或创建 /etc/barman.d/pg.conf
-```
-
-## 通过 Tailscale 连接
-
-Barman 容器会加入你的 Tailscale 网络，可以直接使用宿主机的 Tailscale IP 或 hostname 连接 PostgreSQL。
-
-## PostgreSQL 交互式命令行
-
-**直接进入 psql（推荐）：**
-
-```bash
+# 进入 psql
 docker exec -it postgres psql -U postgres
-```
 
-**先进容器再执行：**
+# 进入 Barman 容器
+docker exec -it barman bash
 
-```bash
-docker exec -it postgres bash
-psql -U postgres
-```
+# 测试 Barman 连接
+docker exec -it barman psql -c 'SELECT version()' -U barman -h <tailscale-hostname> postgres
 
-**连接到特定数据库：**
-
-```bash
-docker exec -it postgres psql -U postgres -d your_database
-```
-
-**常用参数：**
-- `-U postgres`: 用户名
-- `-d dbname`: 指定数据库
-- `-h hostname`: 主机
-
-## PG 默认配置导出 
-```bash
-docker exec postgres cat /var/lib/postgresql/data/postgresql.conf > postgresql.conf
-docker exec postgres cat /var/lib/postgresql/data/pg_hba.conf > pg_hba.conf
+# 导出 PG 默认配置
+docker exec postgres cat /var/lib/postgresql/data/postgresql.conf > pg/postgresql.conf
+docker exec postgres cat /var/lib/postgresql/data/pg_hba.conf > pg/pg_hba.conf
 ```
