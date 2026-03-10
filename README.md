@@ -64,8 +64,11 @@ docker exec -it postgres psql -U postgres
 # 进入 Barman 容器
 docker exec -it barman bash
 
-# 测试 Barman 连接
+# 手动测试 Barman 连接
 docker exec -it barman psql -c 'SELECT version()' -U barman -h <tailscale-hostname> postgres
+
+# 使用 Barman 测试连接
+docker exec -it barman barman check streaming-backup-server
 
 # 导出 PG 默认配置
 docker exec postgres cat /var/lib/postgresql/data/postgresql.conf > pg/postgresql.conf

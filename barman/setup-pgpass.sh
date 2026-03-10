@@ -12,7 +12,7 @@ fi
 
 cat > "$PGPASS_FILE" << EOF
 ${PG_HOST}:5432:postgres:barman:${BARMAN_PASSWORD}
-${PG_HOST}:5432:postgres:streaming_barman:${STREAMING_BARMAN_PASSWORD}
+${PG_HOST}:5432:*:streaming_barman:${STREAMING_BARMAN_PASSWORD}
 EOF
 
 chmod 600 "$PGPASS_FILE"
