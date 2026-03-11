@@ -25,6 +25,7 @@ RUN mkdir -p /var/lib/barman /recover && \
 
 COPY setup-pgpass.sh /usr/local/bin/setup-pgpass.sh
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY health-check.py /usr/local/bin/health-check.py
 RUN chmod +x /usr/local/bin/setup-pgpass.sh /usr/local/bin/entrypoint.sh
 
 USER barman

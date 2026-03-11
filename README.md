@@ -17,6 +17,7 @@
 │   ├── Dockerfile
 │   ├── docker-compose.yml      # Barman + Tailscale sidecar
 │   ├── setup-pgpass.sh         # 配置数据库密码
+│   ├── health-check.py         # 健康检查 HTTP 服务
 │   ├── entrypoint.sh           # 容器启动脚本
 │   ├── config/                 # 挂载到 /etc/barman.d
 │   │   ├── streaming-backup-server.conf
@@ -158,4 +159,30 @@ Barman 容器内运行 cron 守护进程，定时任务配置文件位于 `barma
 ```bash
 cd barman
 docker compose restart barman
+```
+
+## 健康检查
+
+Barman 容器内置 HTTP 健康检查服务，定时运行 `barman check` 并缓存结果，适合外部监控系统（如 UptimeFlare）pull 使用。
+
+> **注意：** `barman check` 本身执行很慢（约 30 秒），且容易超时。这里的设计是异步缓存结果，HTTP 端点只返回缓存，响应是即时的。
+> 但**容器首次启动时**，第一次 check 尚未完成，端点会返回 503 直到首次检查结束（~30s）。
+> 监控系统建议配置：超时 ≥ 60s，失败重试 ≥ 3 次后再告警，避免误报。
+
+端点：`http://<barman-tailscale-ip>:8000/`
+- `200` — 备份状态正常
+- `503` — 检查失败 / 结果过期 / 首次检查未完成
+
+环境变量：
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `HEALTH_CHECK_PORT` | `8000` | HTTP 监听端口 |
+| `CHECK_INTERVAL` | `300` | 检查间隔（秒） |
+| `FAIL_THRESHOLD` | `3` | 连续失败多少次后才标记为异常 |
+| `BARMAN_SERVER_NAME` | `streaming-backup-server` | barman 服务器名 |
+
+手动测试：
+```bash
+curl http://<barman-tailscale-ip>:8000/
 ```
