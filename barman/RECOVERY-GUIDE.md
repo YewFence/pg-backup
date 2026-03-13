@@ -62,49 +62,7 @@ restore_command = 'cp /recover/barman_wal/%f %p'
 
 pg-recovered 的 compose 配置中已额外挂载 `./recover:/recover:ro`，使该路径在容器内直接可用，无需手动修改。
 
-
-#### 4. 检查 postgresql.auto.conf
-
-```bash
-docker run --rm -v $(pwd)/pgdata:/data postgres:17 cat /data/postgresql.auto.conf
-```
-
-latest 恢复通常不包含 `restore_command`。如果存在，需要删除（postgres:17 镜像内没有 `barman-wal-restore`）：
-
-```bash
-docker run --rm -v $(pwd)/pgdata:/data postgres:17 bash -c "
-  sed -i '/^restore_command/d' /data/postgresql.auto.conf
-  sed -i '/^recovery_end_command/d' /data/postgresql.auto.conf
-"
-```
-
-#### 5. 启动 PG 并验证
-
-```bash
-docker compose up -d
-sleep 5
-
-# 确认不在恢复模式
-docker exec postgres psql -U postgres -c "SELECT pg_is_in_recovery()"
-# 期望: f
-
-# 验证数据完整
-docker exec postgres psql -U postgres -c "
-  SELECT 'users' as tbl, count(*) FROM users
-  UNION ALL SELECT 'products', count(*) FROM products
-  UNION ALL SELECT 'orders', count(*) FROM orders;
-"
-```
-
-#### 6. 恢复后重建备份链
-
-PG 恢复后 system identifier 不变，barman 可以继续工作。建议立即创建新的 base backup：
-
-```bash
-docker exec barman barman cron
-sleep 30  # 等待 receive-wal 就绪
-docker exec barman barman backup streaming-backup-server --wait
-```
+远程恢复场景中，远端 PG 的 compose.yml 也建议额外挂载 `./pgdata:/recover:ro`，同样无需改 conf。
 
 ---
 
@@ -183,114 +141,95 @@ docker exec barman bash -c "rm -rf /recover/* /recover/.*"
 ```
 ---
 
-## 恢复场景 B：通过 SSH 远程恢复到异地 PG 服务器
+## 恢复场景 B：本地恢复 + rsync 到远端 PG 服务器
 
-适用于：barman 和 PG 在不同机器上（通过 Tailscale 连接），需要直接恢复到远程 PG 服务器。
+适用于：barman 和 PG 在不同机器上（通过 Tailscale 连接），需要恢复到远端 PG 服务器。
+
+策略：先在 barman 本地恢复到 `/recover`，再通过宿主机 rsync（走 Tailscale SSH）传到远端。无需在 barman 容器内安装 SSH 或管理密钥。
 
 ### 前置条件
 
 - barman 容器正在运行
 - 确认有可用备份：`docker exec barman barman list-backups streaming-backup-server`
-- 远程机器上已配置 SSH 访问（建议使用 UID 999 的用户，与 postgres 容器一致）
-- 远程机器上 PG 容器已停止
+- barman 宿主机已加入 Tailscale，能 SSH 到远端
+- 远端 PG 已停止
 
-### SSH 用户配置
+### 远端 PG compose.yml 建议配置
 
-在远程机器（PG 所在机器）上创建 UID 999 的恢复用户：
+为了让 PITR 恢复时 `restore_command` 路径自动生效，远端 PG 的 compose.yml 建议额外挂载一个 `/recover:ro`：
 
-```bash
-# 在远程机器上执行
-sudo useradd -u 999 -m -s /bin/bash pgrecovery
-sudo mkdir -p /home/pgrecovery/.ssh
-sudo cp ~/.ssh/authorized_keys /home/pgrecovery/.ssh/
-sudo chown -R pgrecovery:pgrecovery /home/pgrecovery/.ssh
-sudo chmod 700 /home/pgrecovery/.ssh
-sudo chmod 600 /home/pgrecovery/.ssh/authorized_keys
+```yaml
+services:
+  postgres:
+    image: postgres:17
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+      - ./pgdata:/recover:ro          # PITR 时 restore_command 指向 /recover/barman_wal/
 ```
 
-在 barman 容器中配置 SSH 密钥：
-
-```bash
-# 在 barman 容器内生成密钥（如果还没有）
-docker exec -u barman barman ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ""
-
-# 查看公钥
-docker exec -u barman barman cat ~/.ssh/id_ed25519.pub
-# 将公钥添加到远程机器的 /home/pgrecovery/.ssh/authorized_keys
-```
+这样无论 latest 还是 PITR 恢复，rsync 过去后直接启动即可，无需修改任何配置文件。
 
 ### 步骤
 
-#### 1. 停止远程 PG 并清空 pgdata
+#### 1. 本地恢复到 /recover
 
 ```bash
-# 在远程机器上
-cd /path/to/pg
-docker compose down
-sudo rm -rf pgdata/*
+cd barman
+docker exec barman bash -c "rm -rf /recover/* /recover/.*"
 ```
-
-#### 2. 执行远程恢复
 
 **恢复到最新状态**：
 
 ```bash
-docker exec barman barman recover \
-  --remote-ssh-command "ssh pgrecovery@<remote-host>" \
-  streaming-backup-server latest /path/to/pgdata
+docker exec barman barman recover streaming-backup-server latest /recover
 ```
 
 **或者 PITR 到指定时间点**：
 
 ```bash
 docker exec barman barman recover \
-  --remote-ssh-command "ssh pgrecovery@<remote-host>" \
   --target-time "<TIMESTAMP>" \
   --target-action=promote \
-  streaming-backup-server latest /path/to/pgdata
+  streaming-backup-server latest /recover
 ```
 
-**使用 delta-restore 增量恢复**（如果 pgdata 已有部分数据）：
+> 时间戳格式示例：`2026-03-10 13:00:04.656887+00`
+
+#### 2.（可选）本地验证
+
+恢复完成后可以先用 pg-recovered 在本地验证数据完整性，确认无误后再传到远端：
 
 ```bash
-docker exec barman barman recover \
-  --remote-ssh-command "ssh pgrecovery@<remote-host>" \
-  --delta-restore \
-  streaming-backup-server latest /path/to/pgdata
+docker compose --profile recovery up -d pg-recovered
+sleep 8
+docker exec pg-recovered psql -U postgres -c "
+  SELECT 'users' as tbl, count(*) FROM users
+  UNION ALL SELECT 'products', count(*) FROM products
+  UNION ALL SELECT 'orders', count(*) FROM orders;
+"
+docker compose --profile recovery stop pg-recovered
 ```
 
-> 注意：
-> - `<remote-host>` 替换为远程机器的 Tailscale hostname 或 IP
-> - `/path/to/pgdata` 是远程机器上的绝对路径
-> - barman 会通过 SSH 在远程机器上以 pgrecovery 用户（UID 999）执行恢复
-> - 恢复的文件自动拥有正确的权限（UID 999），postgres 容器可以直接使用
+#### 3. rsync 到远端
 
-#### 3. 检查 postgresql.auto.conf（在远程机器上）
+从 barman **宿主机**执行（`./recover` 是 bind mount，宿主机可直接访问）：
 
 ```bash
-# 在远程机器上
-cat /path/to/pgdata/postgresql.auto.conf
+rsync -avz --delete ./recover/ <user>@<ts-hostname>:/path/to/pg/pgdata/
 ```
 
-latest 恢复通常不包含 `restore_command`。如果是 PITR 恢复，会包含 `restore_command`，但路径可能不正确（指向 barman 机器的路径）。需要删除或修改：
+> - `<ts-hostname>` 是远端机器的 Tailscale hostname
+> - Tailscale SSH 无需管理密钥，宿主机已加入 Tailscale 即可直接连接
+> - `--delete` 确保远端 pgdata 与本地恢复结果完全一致
+
+#### 4. 启动远端 PG 并验证
 
 ```bash
-# 在远程机器上
-sed -i '/^restore_command/d' /path/to/pgdata/postgresql.auto.conf
-sed -i '/^recovery_end_command/d' /path/to/pgdata/postgresql.auto.conf
-```
-
-> 对于 PITR 恢复，如果需要 `restore_command`，可以配置 barman-wal-restore 通过网络获取 WAL，或者在恢复前确保所有需要的 WAL 都已包含在备份中。
-
-#### 4. 启动远程 PG 并验证
-
-```bash
-# 在远程机器上
+# 在远端机器上
 cd /path/to/pg
 docker compose up -d
 sleep 5
 
-# 验证
 docker exec postgres psql -U postgres -c "SELECT pg_is_in_recovery()"
 # 期望: f
 
@@ -303,11 +242,19 @@ docker exec postgres psql -U postgres -c "
 
 #### 5. 恢复后重建备份链
 
+PG 恢复后 system identifier 不变，barman 可以继续工作。建议立即创建新的 base backup：
+
 ```bash
 # 在 barman 机器上
 docker exec barman barman cron
 sleep 30
 docker exec barman barman backup streaming-backup-server --wait
+```
+
+#### 6. 清理 barman 本地 /recover
+
+```bash
+docker exec barman bash -c "rm -rf /recover/* /recover/.*"
 ```
 
 ---

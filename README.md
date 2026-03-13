@@ -31,7 +31,7 @@
 
 **重要说明**：
 - barman 容器内的 barman 用户 UID/GID 为 999，与 postgres:17 镜像中的 postgres 用户一致
-- 这样无论是本地恢复（pg-recovered）还是远程 SSH 恢复，文件权限都自动正确，无需 chown
+- 这样无论是本地恢复（pg-recovered）还是 rsync 远程恢复，文件权限都自动正确，无需 chown
 
 ## 快速开始
 
