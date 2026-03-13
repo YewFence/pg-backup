@@ -20,7 +20,13 @@ RUN curl -fsSL "https://github.com/aptible/supercronic/releases/download/${SUPER
     -o /usr/local/bin/supercronic \
     && chmod +x /usr/local/bin/supercronic
 
-RUN mkdir -p /var/lib/barman /recover && \
+# 将 barman 用户 UID/GID 改为 999，与 postgres:17 镜像中的 postgres 用户一致
+# 这样无论本地恢复还是远程 SSH 恢复，文件权限都与 postgres 容器一致
+# GID 999 被 systemd-journal 占用（容器内无用），先删除
+RUN groupdel systemd-journal && \
+    usermod -u 999 barman && \
+    groupmod -g 999 barman && \
+    mkdir -p /var/lib/barman /recover && \
     chown -R barman:barman /var/lib/barman /recover
 
 COPY setup-pgpass.sh /usr/local/bin/setup-pgpass.sh

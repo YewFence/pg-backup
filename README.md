@@ -14,7 +14,7 @@
 │   ├── pg_hba.conf
 │   └── initdb/
 ├── barman/                     # Barman 客户端（备份工具）
-│   ├── Dockerfile
+│   ├── Dockerfile              # barman 用户 UID/GID 统一为 999
 │   ├── docker-compose.yml      # Barman + Tailscale sidecar
 │   ├── setup-pgpass.sh         # 配置数据库密码
 │   ├── health-check.py         # 健康检查 HTTP 服务
@@ -22,9 +22,16 @@
 │   ├── config/                 # 挂载到 /etc/barman.d
 │   │   ├── streaming-backup-server.conf
 │   │   └── barman.crontab      # 定时任务配置
+│   ├── recover/                # 本地恢复中转目录
+│   ├── RECOVERY-GUIDE.md       # 详细恢复指南
+│   ├── E2E-TEST.md             # 端到端测试流程
 │   └── .env                    # Tailscale auth key（不提交）
 └── README.md
 ```
+
+**重要说明**：
+- barman 容器内的 barman 用户 UID/GID 为 999，与 postgres:17 镜像中的 postgres 用户一致
+- 这样无论是本地恢复（pg-recovered）还是远程 SSH 恢复，文件权限都自动正确，无需 chown
 
 ## 快速开始
 
