@@ -1,0 +1,35 @@
+services:
+  postgres:
+    image: postgres:17
+    container_name: postgres
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: postgres
+    ports:
+      - 127.0.0.1:5432:5432
+      # 映射到当前宿主机 Tailscale IP，自行更改
+      # - 100.0.0.1:5432:5432
+    volumes:
+      # 数据目录
+      - ./pgdata:/var/lib/postgresql/data
+      # 自动初始化，创建 Barman 用户
+      - ./initdb:/docker-entrypoint-initdb.d
+      # Barman 相关配置
+      - ./pg_hba.conf:/var/lib/postgresql/data/pg_hba.conf
+      - ./postgresql.conf:/var/lib/postgresql/data/postgresql.conf
+      # 恢复用挂载卷，Barman 恢复时覆盖恢复至此处
+      - ./pgdata:/recover:ro
+    networks:
+      # 使用 PG 的容器加入该网络
+      - pg-net
+networks:
+  pg-net:
+    name: postgres-net
+    driver: bridge
+#     networks:
+#       - pg-net
+# networks:
+#   pg_net:
+#     external: true
