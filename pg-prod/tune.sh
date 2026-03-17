@@ -22,6 +22,7 @@ case "$choice" in
     effective_cache_size="1536MB"
     work_mem="5MB"
     maintenance_work_mem="128MB"
+    max_wal_size="512MB"
     label="2GB"
     ;;
   2)
@@ -29,6 +30,7 @@ case "$choice" in
     effective_cache_size="3GB"
     work_mem="10MB"
     maintenance_work_mem="256MB"
+    max_wal_size="1GB"
     label="4GB"
     ;;
   3)
@@ -36,6 +38,7 @@ case "$choice" in
     effective_cache_size="6GB"
     work_mem="20MB"
     maintenance_work_mem="512MB"
+    max_wal_size="2GB"
     label="8GB"
     ;;
   4)
@@ -43,6 +46,7 @@ case "$choice" in
     effective_cache_size="12GB"
     work_mem="40MB"
     maintenance_work_mem="1GB"
+    max_wal_size="4GB"
     label="16GB"
     ;;
   *)
@@ -55,11 +59,13 @@ sed -i "s/^shared_buffers = .*/shared_buffers = $shared_buffers/" "$CONF"
 sed -i "s/^effective_cache_size = .*/effective_cache_size = $effective_cache_size/" "$CONF"
 sed -i "s/^work_mem = .*/work_mem = $work_mem/" "$CONF"
 sed -i "s/^maintenance_work_mem = .*/maintenance_work_mem = $maintenance_work_mem/" "$CONF"
+sed -i "s/^max_wal_size = .*/max_wal_size = $max_wal_size/" "$CONF"
 
 echo "已切换到 ${label} 档位:"
-echo "  shared_buffers      = $shared_buffers"
-echo "  effective_cache_size = $effective_cache_size"
-echo "  work_mem            = $work_mem"
-echo "  maintenance_work_mem = $maintenance_work_mem"
+echo "  shared_buffers         = $shared_buffers"
+echo "  effective_cache_size   = $effective_cache_size"
+echo "  work_mem               = $work_mem"
+echo "  maintenance_work_mem   = $maintenance_work_mem"
+echo "  max_wal_size           = $max_wal_size"
 echo ""
 echo "重启 PostgreSQL 使配置生效: docker compose restart postgres"

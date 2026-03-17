@@ -11,6 +11,12 @@ services:
       - 127.0.0.1:5432:5432
       # 映射到当前宿主机 Tailscale IP，自行更改
       # - 100.0.0.1:5432:5432
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     volumes:
       # 数据目录
       - ./pgdata:/var/lib/postgresql/data
@@ -24,6 +30,15 @@ services:
     networks:
       # 使用 PG 的容器加入该网络
       - pg-net
+    # # 资源限制 — 小机器上按需取消注释
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: "2"
+    #       memory: 2G
+    #     reservations:
+    #       cpus: "0.5"
+    #       memory: 512M
 networks:
   pg-net:
     name: postgres-net
