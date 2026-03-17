@@ -1,6 +1,11 @@
 #!/bin/bash
 set -e
 
+# 恢复模式下跳过（用于恢复时预下载 WAL）
+if [ "${RECOVERY_MODE}" = "true" ]; then
+    exit 0
+fi
+
 if [ -z "${S3_BUCKET_URL}" ]; then
     echo "Error: S3_BUCKET_URL is not set" >&2
     exit 1

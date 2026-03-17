@@ -1,6 +1,11 @@
 #!/bin/bash
 set -e
 
+# 恢复模式下跳过（用于恢复时预下载 WAL）
+if [ "${RECOVERY_MODE}" = "true" ]; then
+    exit 0
+fi
+
 # S3 未配置则跳过
 if [ -z "${S3_BUCKET_URL}" ]; then
     exit 0

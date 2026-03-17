@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:17
+    build: .
     container_name: postgres
     restart: unless-stopped
     env_file: .env
@@ -13,8 +13,8 @@ services:
     volumes:
       - ./pgdata:/var/lib/postgresql/data
       - ./initdb:/docker-entrypoint-initdb.d
-      - ./pg_hba.conf:/var/lib/postgresql/data/pg_hba.conf
-      - ./postgresql.conf:/var/lib/postgresql/data/postgresql.conf
+      - ./pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - ./postgresql.conf:/etc/postgresql/postgresql.conf:ro
       - wal-archive:/archive
 
   barman-cloud:
@@ -33,6 +33,31 @@ services:
       PG_USER: barman
     volumes:
       - wal-archive:/archive
+      - ./pgdata:/var/lib/postgresql/data:ro
+
+  pg-recovery:
+    build:
+      context: .
+      dockerfile: Dockerfile.recovery
+    container_name: pg-recovery
+    profiles: ["recovery"]
+    env_file: .env
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+      # RECOVERY_TARGET_TIME: "2026-03-17 10:39:50+00"  # 可选：PITR 目标时间
+      # AUTO_SHUTDOWN_AFTER_RECOVERY: "true"  # 可选：恢复完成后自动关闭容器
+      # RECOVERY_VERIFY_QUERY: "SELECT count(*) FROM users;"  # 可选：自定义验证查询
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./pgdata-recovery:/var/lib/postgresql/data
 
 volumes:
   wal-archive:
+
+networks:
+  default:
+    name: pg_default
+    external: true
