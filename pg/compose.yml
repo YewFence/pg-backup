@@ -15,4 +15,24 @@ services:
       - ./initdb:/docker-entrypoint-initdb.d
       - ./pg_hba.conf:/var/lib/postgresql/data/pg_hba.conf
       - ./postgresql.conf:/var/lib/postgresql/data/postgresql.conf
+      - wal-archive:/archive
 
+  barman-cloud:
+    build:
+      context: .
+      dockerfile: Dockerfile.cloud
+    container_name: barman-cloud
+    restart: unless-stopped
+    init: true
+    profiles: ["cloud"]
+    depends_on:
+      - postgres
+    env_file: .env
+    environment:
+      PG_HOST: postgres
+      PG_USER: barman
+    volumes:
+      - wal-archive:/archive
+
+volumes:
+  wal-archive:

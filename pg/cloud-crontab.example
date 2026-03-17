@@ -1,0 +1,11 @@
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin
+
+# WAL 推送：每分钟扫描共享卷
+* * * * * /usr/local/bin/wal-push.sh
+
+# 基础备份：每天凌晨 2:07
+7 2 * * * /usr/local/bin/cloud-backup.sh
+
+# 清理旧备份：每天凌晨 3:17
+17 3 * * * /usr/local/bin/cloud-backup-delete.sh

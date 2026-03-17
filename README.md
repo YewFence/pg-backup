@@ -9,10 +9,17 @@
 ```
 .
 ├── pg/                         # PostgreSQL 17 数据库（被备份的目标）
-│   ├── docker-compose.yml
+│   ├── compose.yml
 │   ├── postgresql.conf
 │   ├── pg_hba.conf
-│   └── initdb/
+│   ├── initdb/
+│   ├── Dockerfile.cloud        # barman-cloud sidecar 镜像
+│   ├── cloud-crontab.example   # sidecar 定时任务模板
+│   └── scripts/                # sidecar 脚本
+│       ├── wal-push.sh         # WAL 推送到 S3
+│       ├── cloud-backup.sh     # 基础备份到 S3
+│       ├── cloud-backup-delete.sh  # 清理旧备份
+│       └── sidecar-entrypoint.sh   # sidecar 入口
 ├── barman/                     # Barman 客户端（备份工具）
 │   ├── Dockerfile              # barman 用户 UID/GID 统一为 999
 │   ├── docker-compose.yml      # Barman + Tailscale sidecar
@@ -193,3 +200,83 @@ Barman 容器内置 HTTP 健康检查服务，定时运行 `barman check` 并缓
 ```bash
 curl http://<barman-tailscale-ip>:8000/
 ```
+
+## S3 云备份（barman-cloud sidecar）
+
+除了 Barman 流复制备份，PG_HOST 端还可以通过 barman-cloud sidecar 将 WAL 和基础备份直接推送到 S3 兼容存储，作为不依赖 Barman 机器的异地容灾方案。
+
+**架构**：PG 容器保持原版 `postgres:17` 不修改，通过 `archive_command` 将 WAL 文件复制到共享卷，sidecar 容器定时扫描共享卷并上传到 S3。
+
+```
+PG 容器                                Sidecar 容器 (profile: cloud)
+┌──────────────────────┐               ┌──────────────────────────┐
+│ archive_command:     │  共享卷        │ barman-cli-cloud         │
+│   cp %p /archive/%f ─┼──→ /archive ──┼→ wal-push.sh ────────────┼──→ S3
+│                      │               │  cloud-backup.sh ────────┼──→ S3
+│                      │  Docker 内网   │  cloud-backup-delete.sh ─┼──→ S3
+│                      │◄──────────────┤   (复制协议连接 PG)       │
+└──────────────────────┘               └──────────────────────────┘
+```
+
+> `S3_BUCKET_URL` 未配置时，`archive_command` 不会往共享卷写入任何文件，行为与不启用云备份完全一致。
+
+### 启用云备份
+
+1. 配置 S3 凭证（编辑 `pg/.env`）：
+
+```bash
+S3_BUCKET_URL=s3://your-bucket/your-prefix
+S3_ENDPOINT_URL=https://your-endpoint    # AWS S3 留空
+AWS_ACCESS_KEY_ID=your-access-key
+AWS_SECRET_ACCESS_KEY=your-secret-key
+```
+
+2. 创建定时任务配置：
+
+```bash
+cd pg
+cp cloud-crontab.example cloud-crontab
+vim cloud-crontab  # 按需调整调度时间
+```
+
+3. 构建并启动 sidecar：
+
+```bash
+cd pg
+docker compose --profile cloud up -d --build
+```
+
+### 云备份常用命令
+
+```bash
+# 手动推送 WAL 文件
+docker exec barman-cloud /usr/local/bin/wal-push.sh
+
+# 手动创建基础备份
+docker exec barman-cloud /usr/local/bin/cloud-backup.sh
+
+# 查看 S3 中的备份列表
+docker exec barman-cloud barman-cloud-backup-list \
+    --cloud-provider aws-s3 \
+    --endpoint-url "$S3_ENDPOINT_URL" \
+    "$S3_BUCKET_URL" pg
+
+# 查看 sidecar 日志
+docker logs -f barman-cloud
+
+# 手动清理旧备份
+docker exec barman-cloud /usr/local/bin/cloud-backup-delete.sh
+```
+
+### 云备份环境变量
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `S3_BUCKET_URL` | （空） | S3 目标地址，如 `s3://my-bucket/pg-backup` |
+| `S3_ENDPOINT_URL` | （空） | S3 兼容服务端点（AWS S3 留空） |
+| `AWS_ACCESS_KEY_ID` | （空） | AWS 访问密钥 |
+| `AWS_SECRET_ACCESS_KEY` | （空） | AWS 密钥 |
+| `BARMAN_CLOUD_SERVER_NAME` | `pg` | S3 路径中的服务器名 |
+| `BARMAN_CLOUD_COMPRESSION` | `gzip` | 压缩算法：gzip / bzip2 / snappy |
+| `BARMAN_CLOUD_RETENTION` | `RECOVERY WINDOW OF 7 DAYS` | 备份保留策略 |
+| `BARMAN_CLOUD_MIN_REDUNDANCY` | `1` | 最少保留备份数 |
