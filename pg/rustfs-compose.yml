@@ -1,0 +1,24 @@
+services:
+  rustfs:
+    image: rustfs/rustfs:latest
+    container_name: rustfs-test
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - rustfs-data:/data
+    environment:
+      RUSTFS_ACCESS_KEY: rustfsadmin
+      RUSTFS_SECRET_KEY: ChangeMe123!
+      RUSTFS_CONSOLE_ENABLE: "true"
+    command: /data
+    networks:
+      - pg_default
+
+volumes:
+  rustfs-data:
+
+networks:
+  pg_default:
+    external: true
