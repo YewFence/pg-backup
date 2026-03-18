@@ -46,11 +46,10 @@ pg-install:
         echo "已自动生成 STREAMING_BARMAN_PASSWORD"
     fi
 
-    printf '%s\n' \
-        "POSTGRES_PASSWORD=${POSTGRES_PASSWORD}" \
-        "BARMAN_PASSWORD=${BARMAN_PASSWORD}" \
-        "STREAMING_BARMAN_PASSWORD=${STREAMING_BARMAN_PASSWORD}" \
-        > "$ENV_FILE"
+    cp "$SOURCE_DIR/.env.example" "$ENV_FILE"
+    sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=${POSTGRES_PASSWORD}|" "$ENV_FILE"
+    sed -i "s|^BARMAN_PASSWORD=.*|BARMAN_PASSWORD=${BARMAN_PASSWORD}|" "$ENV_FILE"
+    sed -i "s|^STREAMING_BARMAN_PASSWORD=.*|STREAMING_BARMAN_PASSWORD=${STREAMING_BARMAN_PASSWORD}|" "$ENV_FILE"
 
     echo ""
     echo "配置已写入 $ENV_FILE"
@@ -120,12 +119,11 @@ barman-install:
         exit 1
     fi
 
-    printf '%s\n' \
-        "TS_AUTHKEY=${TS_AUTHKEY}" \
-        "PG_HOST=${PG_HOST}" \
-        "BARMAN_PASSWORD=${BARMAN_PASSWORD}" \
-        "STREAMING_BARMAN_PASSWORD=${STREAMING_BARMAN_PASSWORD}" \
-        > "$ENV_FILE"
+    cp "$SOURCE_DIR/.env.example" "$ENV_FILE"
+    sed -i "s|^TS_AUTHKEY=.*|TS_AUTHKEY=${TS_AUTHKEY}|" "$ENV_FILE"
+    sed -i "s|^PG_HOST=.*|PG_HOST=${PG_HOST}|" "$ENV_FILE"
+    sed -i "s|^BARMAN_PASSWORD=.*|BARMAN_PASSWORD=${BARMAN_PASSWORD}|" "$ENV_FILE"
+    sed -i "s|^STREAMING_BARMAN_PASSWORD=.*|STREAMING_BARMAN_PASSWORD=${STREAMING_BARMAN_PASSWORD}|" "$ENV_FILE"
 
     echo "配置已写入 $ENV_FILE"
 
