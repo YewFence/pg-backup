@@ -12,10 +12,10 @@ PATH=/usr/local/bin:/usr/bin:/bin
 # * * * * * echo "[$(date '+%Y-%m-%d %H:%M:%S')] Barman cron test is working"
 
 # 基础备份：每天凌晨 2 点创建一个完整备份
-# 0 2 * * * barman backup streaming-backup-server
+0 2 * * * barman backup streaming-backup-server
 
 # 可选：每周日凌晨 3 点验证最新备份的完整性
-# 0 3 * * 0 barman verify-backup streaming-backup-server latest
+0 3 * * 0 barman verify-backup streaming-backup-server latest
 
 # 可选：每月 1 号凌晨 4 点生成备份清单
 # 0 4 1 * * barman generate-manifest streaming-backup-server latest

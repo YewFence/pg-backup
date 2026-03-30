@@ -163,11 +163,14 @@ docker exec postgres cat /var/lib/postgresql/data/pg_hba.conf > pg/pg_hba.conf
 
 ## 定时任务说明
 
+> **重要：** 如果不配置 `barman.crontab`，Barman 容器会正常运行但**不会自动备份**，也不会报错。请在部署后确认定时任务已正确配置。
+
 Barman 容器内运行 cron 守护进程，定时任务配置文件位于 `barman/config/barman.crontab`。
 
-默认任务：
+默认任务（`barman.crontab.example`）：
 - 每分钟执行 `barman cron`：归档 WAL 文件、清理过期备份
 - 每天凌晨 2 点执行 `barman backup`：创建完整的基础备份
+- 每周日凌晨 3 点执行 `barman verify-backup`：验证备份完整性
 
 修改定时任务后需要重启容器：
 ```bash

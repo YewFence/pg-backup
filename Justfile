@@ -79,6 +79,8 @@ barman-install:
     ENV_FILE="$SOURCE_DIR/.env"
     CONF_FILE="$SOURCE_DIR/config/streaming-backup-server.conf"
     CONF_EXAMPLE="$SOURCE_DIR/config/streaming-backup-server.conf.example"
+    CRONTAB_FILE="$SOURCE_DIR/config/barman.crontab"
+    CRONTAB_EXAMPLE="$SOURCE_DIR/config/barman.crontab.example"
 
     echo "=== Barman 备份端安装向导 ==="
     echo ""
@@ -131,6 +133,12 @@ barman-install:
     if [ ! -f "$CONF_FILE" ] && [ -f "$CONF_EXAMPLE" ]; then
         sed "s/host=[^ ]*/host=${PG_HOST}/" "$CONF_EXAMPLE" > "$CONF_FILE"
         echo "Barman 服务器配置已生成：$CONF_FILE（host=${PG_HOST}）"
+    fi
+
+    # 如果 crontab 不存在，从 example 复制
+    if [ ! -f "$CRONTAB_FILE" ] && [ -f "$CRONTAB_EXAMPLE" ]; then
+        cp "$CRONTAB_EXAMPLE" "$CRONTAB_FILE"
+        echo "定时任务配置已生成：$CRONTAB_FILE"
     fi
 
     echo ""
