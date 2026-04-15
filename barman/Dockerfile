@@ -26,8 +26,9 @@ RUN curl -fsSL "https://github.com/aptible/supercronic/releases/download/${SUPER
 RUN groupdel systemd-journal && \
     usermod -u 999 barman && \
     groupmod -g 999 barman && \
-    mkdir -p /var/lib/barman /recover && \
-    chown -R barman:barman /var/lib/barman /recover
+    mkdir -p /var/lib/barman /recover /var/log/barman && \
+    touch /var/log/barman/barman.log && \
+    chown -R barman:barman /var/lib/barman /recover /var/log/barman
 
 COPY setup-pgpass.sh /usr/local/bin/setup-pgpass.sh
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
