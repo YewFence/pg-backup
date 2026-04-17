@@ -1,8 +1,7 @@
 # pg-backup
 
-> 这是一个**测试项目**，用于测试 [Barman](https://pgbarman.org/) 对 PostgreSQL 数据库的备份与恢复功能。
-> Barman 客户端通过 Tailscale 组网连接到 PostgreSQL 服务器。
-> 此处我们假设宿主机 + pg/ 与 barman/ 目录在不同机器上，且宿主机已安装并登录 Tailscale 作为 Tailscale 节点，barman 使用 Tailscale Docker 作为 Tailscale 节点。
+这是一个 PostgreSQL / Barman 生产部署模版项目兼测试项目，用于测试 [Barman](https://pgbarman.org/) 对 PostgreSQL 数据库的备份与恢复功能，以及通过 docker compose 快速部署可被 Barman 连接并备份的 PostgreSQL 实例与可通过 Tailscale 连接 PostgreSQL 实例的 Barman 实例
+> 测试环境假设：宿主机 + pg/ 与 barman/ 目录在不同机器上，且宿主机已安装并登录 Tailscale 作为 Tailscale 节点，barman 使用 Tailscale Docker 作为 Tailscale 节点。
 
 ## 项目结构
 
@@ -42,44 +41,55 @@
 
 ## 快速开始
 
-### 1. 启动 PostgreSQL
+### 依赖
+
+- [mise](https://mise.jdx.dev)
+- [tailscale](https://tailscale.com)
+- docker compose
+
+> PostgreSQL 宿主机需要 Tailscale 客户端，Barman 宿主机无需 Tailscale 客户端
+> 
+> TailscaleACL 需要允许 Barman 宿主机访问 PostgreSQL 宿主机的 5432 端口
+
+### A 从模版安装并启动 PostgreSQL
 
 ```bash
-cd pg
-docker compose up -d
+mise r pg-install
+# 需要输入密码，会持久到 .env 文件，也可以让脚本使用 openssl 自动生成
+cd ../pg && docker compose up -d
 ```
 
-### 2. 启动 Barman
+### B 从模版安装并启动 Barman
 
-在 `barman/` 目录下创建 `.env` 文件：
+1. 获取 Tailscale auth key: https://login.tailscale.com/admin/settings/keys
 
+2. 安装并启动
 ```bash
-cp .env.example .env
-vim .env
+mise r barman-install
+# 必须输入 PostgreSQL 的密码
+cd ../barman && docker compose up -d
 ```
 
-> 获取 Tailscale auth key: https://login.tailscale.com/admin/settings/keys
+Barman 容器会加入你的 Tailscale 网络，通过宿主机的 Tailscale hostname 连接 PostgreSQL。请确认 ACL 配置正常
 
-编辑连接配置文件
+
+3. 手动触发 Barman Cron 维护以创建 Slot 与进行第一次 WAL 归档
+
 ```bash
-cp config/streaming-backup-server.conf.example config/streaming-backup-server.conf
-vim config/streaming-backup-server.conf
+docker exec barman barman cron
 ```
 
-配置定时任务：
+4. 检查连接状态
+
 ```bash
-cp config/barman.crontab.example config/barman.crontab
+docker exec barman barman check streaming-backup-server
+```
+
+5. （可选的）配置定时任务
+
+```bash
 vim config/barman.crontab
 ```
-
-启动 Barman：
-
-```bash
-cd barman
-docker compose up -d
-```
-
-Barman 容器会加入你的 Tailscale 网络，通过宿主机的 Tailscale hostname 连接 PostgreSQL。
 
 ## 常用命令
 
