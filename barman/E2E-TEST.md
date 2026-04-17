@@ -25,7 +25,7 @@ docker exec postgres psql -U postgres -c 'SELECT version()'
 docker exec barman barman --version
 
 # Tailscale 连通
-docker exec barman psql -U barman -h wsl-yew-branch postgres -c 'SELECT 1'
+docker exec barman psql -U barman -h pg-host postgres -c 'SELECT 1'
 
 # WAL 配置正确
 docker exec postgres psql -U postgres -c \

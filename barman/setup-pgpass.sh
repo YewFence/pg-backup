@@ -2,7 +2,7 @@
 set -eu
 
 PGPASS_FILE="/var/lib/barman/.pgpass"
-PG_HOST="${PG_HOST:-wsl-yew-branch}"
+PG_HOST="${PG_HOST:-pg-host}"
 
 # Check required variables
 if [ -z "${BARMAN_PASSWORD:-}" ] || [ -z "${STREAMING_BARMAN_PASSWORD:-}" ]; then

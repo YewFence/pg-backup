@@ -99,7 +99,7 @@ docker logs -f barman
 docker exec barman crontab -l
 
 # 手动测试 Posrgres 连接
-docker exec barman psql -c 'SELECT version()' -U barman -h wsl-yew-branch postgres
+docker exec barman psql -c 'SELECT version()' -U barman -h pg-host postgres
 ```
 
 ### Barman 操作

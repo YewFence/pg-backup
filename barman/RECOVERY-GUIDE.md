@@ -10,7 +10,7 @@ pg/                         barman/
 └── ...                     └── (barman-data)     ← 命名卷，barman 自管
 ```
 
-- barman 通过 Tailscale 连接到 PG（host: `wsl-yew-branch`）
+- barman 通过 Tailscale 连接到 PG（host: `pg-host`）
 - barman 和 postgres 容器内均使用 **UID 999** 运行，共享文件无需 chown
 - `pg-recovered` 是恢复验证用的独立 PG 实例（profile: `recovery`，端口 5433）
 
