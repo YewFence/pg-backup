@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+#MISE description="初始化配置并部署 PG（生产环境首次部署）"
+set -e
+SOURCE_DIR="pg-prod"
+TARGET_DIR="../pg"
+ENV_FILE="$SOURCE_DIR/.env"
+
+echo "=== PostgreSQL 服务端安装向导 ==="
+echo ""
+
+if [ -d "$TARGET_DIR" ]; then
+    echo "错误：目标目录 $TARGET_DIR 已存在，请先删除或重命名。"
+    exit 1
+fi
+
+echo "请输入 PostgreSQL 超级用户密码（POSTGRES_PASSWORD，留空自动生成）："
+read -rs POSTGRES_PASSWORD
+echo ""
+if [ -z "$POSTGRES_PASSWORD" ]; then
+    POSTGRES_PASSWORD=$(openssl rand -base64 24)
+    echo "已自动生成 POSTGRES_PASSWORD"
+fi
+
+echo "请输入 Barman 用户密码（BARMAN_PASSWORD，留空自动生成）："
+read -rs BARMAN_PASSWORD
+echo ""
+if [ -z "$BARMAN_PASSWORD" ]; then
+    BARMAN_PASSWORD=$(openssl rand -base64 24)
+    echo "已自动生成 BARMAN_PASSWORD"
+fi
+
+echo "请输入 Barman 流复制用户密码（STREAMING_BARMAN_PASSWORD，留空自动生成）："
+read -rs STREAMING_BARMAN_PASSWORD
+echo ""
+if [ -z "$STREAMING_BARMAN_PASSWORD" ]; then
+    STREAMING_BARMAN_PASSWORD=$(openssl rand -base64 24)
+    echo "已自动生成 STREAMING_BARMAN_PASSWORD"
+fi
+
+cp "$SOURCE_DIR/.env.example" "$ENV_FILE"
+sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=${POSTGRES_PASSWORD}|" "$ENV_FILE"
+sed -i "s|^BARMAN_PASSWORD=.*|BARMAN_PASSWORD=${BARMAN_PASSWORD}|" "$ENV_FILE"
+sed -i "s|^STREAMING_BARMAN_PASSWORD=.*|STREAMING_BARMAN_PASSWORD=${STREAMING_BARMAN_PASSWORD}|" "$ENV_FILE"
+
+echo ""
+echo "配置已写入 $ENV_FILE"
+echo ""
+echo "===== 密码汇总（请妥善保存）====="
+echo "POSTGRES_PASSWORD=${POSTGRES_PASSWORD}"
+echo "BARMAN_PASSWORD=${BARMAN_PASSWORD}"
+echo "STREAMING_BARMAN_PASSWORD=${STREAMING_BARMAN_PASSWORD}"
+echo "================================="
+echo ""
+echo "移动服务目录到 $TARGET_DIR..."
+cp -r "$SOURCE_DIR" "$TARGET_DIR"
+echo ""
+echo "✓ 完成！PostgreSQL 服务已部署到 $TARGET_DIR"
+echo ""
+echo "启动命令："
+echo "  cd $TARGET_DIR && docker compose up -d"

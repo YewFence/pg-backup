@@ -4,7 +4,7 @@
 
 ## 配置文件
 
-部署前需要配置两个文件（`just barman-install` 会自动从 example 复制）：
+部署前需要配置两个文件（`mise r barman-install` 会自动从 example 复制）：
 
 | 文件 | 用途 | 必须修改 |
 |------|------|----------|
