@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+#MISE description="为 HDD 场景生成 PG 存储参数覆盖配置"
+#USAGE flag "--apply" help="写入配置文件"
+#USAGE flag "--no-reload" help="写入后不自动重载 PostgreSQL 配置"
+#USAGE flag "--dir <dir>" help="pg-install 生成的实例目录" env="PG_INSTANCE_DIR"
+set -euo pipefail
+
+COMMON="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/pg-local-config-common.sh"
+# shellcheck source=mise-tasks/lib/pg-local-config-common.sh
+source "$COMMON"
+
+ROOT_DIR="$(repo_root_from_task)"
+INSTANCE_DIR="${usage_dir:-${PG_INSTANCE_DIR:-$(default_pg_instance_dir "$ROOT_DIR")}}"
+apply="${usage_apply:-false}"
+reload="true"
+
+if [ "${usage_no_reload:-false}" = "true" ]; then
+    reload="false"
+fi
+
+INSTANCE_DIR="$(absolute_existing_dir "$INSTANCE_DIR")"
+require_pg_instance "$INSTANCE_DIR"
+ensure_conf_dir "$INSTANCE_DIR"
+
+CONF_DIR="$INSTANCE_DIR/conf.d"
+TARGET="$CONF_DIR/70-storage.conf"
+tmp="$(mktemp "$CONF_DIR/.70-storage.conf.tmp.XXXXXX")"
+trap 'rm -f "$tmp"' EXIT
+
+cat > "$tmp" <<'EOF'
+# 由 mise r pg-reset-ssd 生成
+# 本地覆盖 HDD 场景的存储参数
+random_page_cost = 4
+effective_io_concurrency = 1
+EOF
+
+preview_file_change "$TARGET" "$tmp"
+confirm_or_exit "$apply"
+apply_conf_file "$TARGET" "$tmp" "70-storage.conf"
+trap - EXIT
+
+if [ "$reload" = "true" ]; then
+    reload_postgres_config "$INSTANCE_DIR" \
+        -c "SELECT name, setting FROM pg_settings WHERE name IN ('random_page_cost', 'effective_io_concurrency') ORDER BY name;" \
+        -c "SELECT name, setting, applied, error FROM pg_file_settings WHERE sourcefile LIKE '%70-storage.conf%' ORDER BY sourceline;"
+else
+    echo "已跳过自动重载，配置会在 PostgreSQL 下次重载或重启后生效"
+fi

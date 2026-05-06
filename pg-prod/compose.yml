@@ -7,6 +7,12 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_DB: postgres
+    command:
+      - postgres
+      - -c
+      - config_file=/etc/postgresql/postgresql.conf
+      - -c
+      - hba_file=/etc/postgresql/pg_hba.conf
     ports:
       - 127.0.0.1:5432:5432
       # 映射到当前宿主机 Tailscale IP，自行更改
@@ -22,9 +28,10 @@ services:
       - ./pgdata:/var/lib/postgresql/data
       # 自动初始化，创建 Barman 用户
       - ./initdb:/docker-entrypoint-initdb.d
-      # Barman 相关配置（挂载到临时位置，由 initdb 脚本复制到 pgdata）
+      # Barman 相关配置
       - ./pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
       - ./postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./conf.d:/etc/postgresql/conf.d:ro
       # WAL 归档共享卷
       - wal-archive:/archive
     networks:

@@ -1,15 +1,30 @@
 #!/usr/bin/env bash
 #MISE description="初始化配置并部署 PG（生产环境首次部署）"
-set -e
-SOURCE_DIR="pg-prod"
-TARGET_DIR="../pg"
-ENV_FILE="$SOURCE_DIR/.env"
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SOURCE_DIR="$ROOT_DIR/pg-prod"
+TARGET_DIR="${PG_INSTALL_TARGET_DIR:-$ROOT_DIR/../pg}"
+ENV_FILE="$TARGET_DIR/.env"
 
 echo "=== PostgreSQL 服务端安装向导 ==="
 echo ""
 
 if [ -d "$TARGET_DIR" ]; then
     echo "错误：目标目录 $TARGET_DIR 已存在，请先删除或重命名。"
+    exit 1
+fi
+
+for runtime_path in .env .pg-instance pgdata pgdata-recovery conf.d/.backup; do
+    if [ -e "$SOURCE_DIR/$runtime_path" ]; then
+        echo "错误：模板目录包含运行时产物 $SOURCE_DIR/$runtime_path，请先移走后再安装。"
+        exit 1
+    fi
+done
+
+runtime_conf="$(find "$SOURCE_DIR/conf.d" -type f ! -name .gitkeep -print -quit 2>/dev/null || true)"
+if [ -n "$runtime_conf" ]; then
+    echo "错误：模板目录包含本地覆盖配置 $runtime_conf，请先移走后再安装。"
     exit 1
 fi
 
@@ -37,10 +52,46 @@ if [ -z "$STREAMING_BARMAN_PASSWORD" ]; then
     echo "已自动生成 STREAMING_BARMAN_PASSWORD"
 fi
 
-cp "$SOURCE_DIR/.env.example" "$ENV_FILE"
-sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=${POSTGRES_PASSWORD}|" "$ENV_FILE"
-sed -i "s|^BARMAN_PASSWORD=.*|BARMAN_PASSWORD=${BARMAN_PASSWORD}|" "$ENV_FILE"
-sed -i "s|^STREAMING_BARMAN_PASSWORD=.*|STREAMING_BARMAN_PASSWORD=${STREAMING_BARMAN_PASSWORD}|" "$ENV_FILE"
+echo ""
+echo "复制服务目录到 $TARGET_DIR..."
+mkdir -p "$TARGET_DIR"
+cp -a "$SOURCE_DIR/." "$TARGET_DIR/"
+
+rm -f "$TARGET_DIR/.pg-prod-template" "$TARGET_DIR/.env"
+rm -rf "$TARGET_DIR/pgdata" "$TARGET_DIR/pgdata-recovery"
+touch "$TARGET_DIR/.pg-instance"
+mkdir -p "$TARGET_DIR/conf.d"
+
+install -m 600 "$SOURCE_DIR/.env.example" "$ENV_FILE"
+
+set_env_value() {
+    local key="$1"
+    local value="$2"
+    local tmp
+
+    tmp="$(mktemp "$ENV_FILE.XXXXXX")"
+    awk -v key="$key" -v value="$value" '
+        BEGIN { replaced = 0 }
+        $0 ~ "^" key "=" {
+            print key "=" value
+            replaced = 1
+            next
+        }
+        { print }
+        END {
+            if (!replaced) {
+                print key "=" value
+            }
+        }
+    ' "$ENV_FILE" > "$tmp"
+    cat "$tmp" > "$ENV_FILE"
+    rm -f "$tmp"
+    chmod 600 "$ENV_FILE"
+}
+
+set_env_value POSTGRES_PASSWORD "$POSTGRES_PASSWORD"
+set_env_value BARMAN_PASSWORD "$BARMAN_PASSWORD"
+set_env_value STREAMING_BARMAN_PASSWORD "$STREAMING_BARMAN_PASSWORD"
 
 echo ""
 echo "配置已写入 $ENV_FILE"
@@ -51,13 +102,10 @@ echo "BARMAN_PASSWORD=${BARMAN_PASSWORD}"
 echo "STREAMING_BARMAN_PASSWORD=${STREAMING_BARMAN_PASSWORD}"
 echo "================================="
 echo ""
-echo "移动服务目录到 $TARGET_DIR..."
-cp -r "$SOURCE_DIR" "$TARGET_DIR"
-echo ""
 echo "✓ 完成！PostgreSQL 服务已部署到 $TARGET_DIR"
 echo ""
 echo "启动命令："
 echo "  cd $TARGET_DIR && docker compose up -d"
 echo ""
 echo "复制槽 WAL 保留上限默认 5GB，如需调整："
-echo "  cd $TARGET_DIR && ./configure-slot-wal-keep.sh"
+echo "  mise r --raw pg-config-slot-wal-keep 5GB --apply --dir \"$TARGET_DIR\""

@@ -1,10 +1,11 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
-# 这个脚本在 initdb 完成后、postgres 启动前执行
-# 复制自定义配置文件到 pgdata
-echo "Copying custom config files..."
-cp /etc/postgresql/postgresql.conf "$PGDATA/postgresql.conf"
-cp /etc/postgresql/pg_hba.conf "$PGDATA/pg_hba.conf"
+for file in /etc/postgresql/postgresql.conf /etc/postgresql/pg_hba.conf; do
+  if [ ! -r "$file" ]; then
+    echo "错误，找不到 PostgreSQL 配置文件 $file"
+    exit 1
+  fi
+done
 
-echo "Config files copied successfully"
+echo "PostgreSQL 配置文件已挂载到 /etc/postgresql，跳过复制到 PGDATA"

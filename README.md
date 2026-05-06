@@ -54,8 +54,11 @@
 ### A 从模版安装并启动 PostgreSQL
 
 ```bash
-mise r pg-install
+mise r --raw pg-install
 # 需要输入密码，会持久到 .env 文件，也可以让脚本使用 openssl 自动生成
+# 可选，在当前模板仓库根目录生成实例本地覆盖配置
+mise r --raw pg-config-slot-wal-keep 5GB --apply --dir ../pg
+mise r --raw pg-tune 4GB --apply --dir ../pg
 cd ../pg && docker compose up -d
 ```
 
@@ -65,7 +68,7 @@ cd ../pg && docker compose up -d
 
 2. 安装并启动
 ```bash
-mise r barman-install
+mise r --raw barman-install
 # 必须输入 PostgreSQL 的密码
 cd ../barman && docker compose up -d
 ```
