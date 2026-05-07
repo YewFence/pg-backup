@@ -18,3 +18,7 @@ EOF
 chmod 600 "$PGPASS_FILE"
 
 echo "pgpass configured for host: ${PG_HOST}"
+
+if [ "$#" -gt 0 ]; then
+    exec "$@"
+fi

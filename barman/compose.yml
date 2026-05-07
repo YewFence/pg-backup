@@ -31,19 +31,58 @@ services:
       - STREAMING_BARMAN_PASSWORD=${STREAMING_BARMAN_PASSWORD}
     volumes:
       - barman-data:/var/lib/barman
-      - ./recover:/recover
       - ./config:/etc/barman.d
+
+  # 一次性恢复服务，避免常驻 barman 容器长期占用恢复卷
+  barman-restore:
+    build: .
+    profiles: ["recovery"]
+    init: true
+    network_mode: "service:tailscale"
+    depends_on:
+      - tailscale
+    environment:
+      - PG_HOST=${PG_HOST}
+      - BARMAN_PASSWORD=${BARMAN_PASSWORD}
+      - STREAMING_BARMAN_PASSWORD=${STREAMING_BARMAN_PASSWORD}
+    volumes:
+      - barman-data:/var/lib/barman
+      - barman-recover:/recover
+      - ./config:/etc/barman.d
+    entrypoint: ["/usr/local/bin/setup-pgpass.sh"]
+    command: ["barman", "--help"]
+
+  # Barman 本地恢复出的文件属于 barman 用户，启动 Postgres 前先修复成 postgres 权限
+  fix-recover-permissions:
+    image: postgres:17
+    container_name: barman-fix-recover-permissions
+    profiles: ["recovery"]
+    user: root
+    command:
+      - bash
+      - -ec
+      - |
+        if [ -d /recover/base ]; then
+          chmod 700 /recover/base
+        fi
+        chown -R postgres:postgres /recover
+        find /recover -type d -exec chmod 700 {} +
+    volumes:
+      - barman-recover:/recover
+    networks:
+      - barman-net
 
   # 恢复验证用 PG，平时不启动
   pg-recovered:
     image: postgres:17
     container_name: pg-recovered
     profiles: ["recovery"]
+    init: true
     ports:
       - "5433:5432"
     volumes:
-      - ./recover:/var/lib/postgresql/data
-      - ./recover:/recover:ro
+      - barman-recover:/var/lib/postgresql/data
+      - barman-recover:/recover:ro
     networks:
       - barman-net
 
@@ -54,3 +93,4 @@ networks:
 volumes:
   tailscale-state:
   barman-data:
+  barman-recover:

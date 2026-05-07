@@ -6,124 +6,106 @@
 pg/                         barman/
 ├── compose.yml             ├── compose.yml
 ├── (pg-data) ← PG 数据卷   ├── config/          ← barman 服务器配置
-├── initdb/seed.sql         ├── recover/         ← 恢复中转目录
-└── ...                     └── (barman-data)     ← 命名卷，barman 自管
+├── initdb/seed.sql         ├── (barman-data)     ← 备份命名卷
+└── ...                     └── (barman-recover)  ← 本地恢复命名卷
 ```
 
-- barman 通过 Tailscale 连接到 PG（host: `pg-host`）
-- barman 和 postgres 容器内均使用 **UID 999** 运行，共享文件无需 chown
-- `pg-recovered` 是恢复验证用的独立 PG 实例（profile: `recovery`，端口 5433）
+Barman 通过 Tailscale 连接到 PG，默认 host 是 `pg-host`，备份数据保存在 `barman-data` 命名卷，恢复中转数据保存在 `barman-recover` 命名卷，`pg-recovered` 是本地恢复验证用的独立 PostgreSQL 实例，使用 `recovery` profile 启动并监听宿主机 `5433` 端口。
 
----
+## 官方恢复建议
+
+Barman 官方文档推荐用 `barman restore SERVER_NAME BACKUP_ID DESTINATION_PATH` 恢复备份，旧命令 `barman recover` 仍可用但已标记为废弃。没有 `--remote-ssh-command` 时属于本地恢复，恢复出的所有文件都会属于运行 Barman 的 `barman` 用户，所以如果后续用 `postgres` 用户启动 PostgreSQL，就必须先把恢复目录和表空间全部改成 `postgres` 所有。
+
+当前 compose 采用更明确的做法，常驻 `barman` 服务只负责备份，恢复时用 `barman-restore` 一次性服务把备份恢复到 `barman-recover` 命名卷里的 `/recover`，然后用 `fix-recover-permissions` 修复成 `postgres` 权限，最后 `pg-recovered` 才启动。这样不需要宿主机 `./recover` 目录，也不会因为 bind mount ownership 变化制造奇怪问题。
 
 ## 注意事项
 
-### 1. barman-data 使用命名卷
+### 备份和恢复目录都使用命名卷
 
-barman 的备份数据（`/var/lib/barman`）使用 Docker 命名卷 `barman-data`，由 Docker 管理权限。避免使用 bind mount，否则容器重建时目录 ownership 可能变为 root，导致 crash loop。
+`barman-data` 保存 `/var/lib/barman`，`barman-recover` 保存 `/recover`，两者都由 Docker 管理。不要把 `/var/lib/barman` 或 `/recover` 改成宿主机 bind mount，除非你愿意额外处理宿主机文件 owner 和 SELinux 标签。
 
-### 2. receive-wal 启动需要 15-30 秒
+### 恢复前先删除恢复卷
 
-执行 `barman cron` 启动 WAL streaming 后，`barman check` 中的 `receive-wal running` 可能短暂显示 FAILED。等待后重试即可。
+`barman restore` 不应该覆盖已有 PostgreSQL 数据目录。每次恢复前先停止恢复相关容器并删除 `barman_barman-recover` 命名卷，下一次执行恢复时 Docker 会重新创建干净的恢复卷。
 
-### 3. switch-wal --archive 经常超时
+### 权限修复是固定步骤
 
-`barman switch-wal --force --archive` 默认等待 30 秒。由于 streaming 延迟，经常超时报错，但 WAL 会在下一次 `barman cron` 时被处理，**不影响数据安全**。
-
-建议的做法：
+本地恢复后文件属于 `barman`，而 `postgres:17` 容器用 `postgres` 用户启动数据库。每次恢复完成后都显式运行 `fix-recover-permissions`，这样不会复用上一次已经退出的一次性容器。
 
 ```bash
-docker exec barman barman switch-wal --force streaming-backup-server
-docker exec barman barman cron
-sleep 10
-docker exec barman barman cron
+docker compose --profile recovery run --rm fix-recover-permissions
 ```
 
-### 4. PG 重建后必须彻底清理 barman 数据
+### PITR 恢复时 restore_command 自动生效
 
-如果 PG 被完全重建（新的 system identifier），barman 中旧的 WAL 文件名会与新 PG 冲突。**必须删除整个服务器目录**后重建：
+Barman 执行 PITR 恢复时会把 WAL 文件放在 `/recover/barman_wal/` 并写入 `restore_command = 'cp /recover/barman_wal/%f %p'`，`pg-recovered` 把同一个命名卷同时挂载到 `/var/lib/postgresql/data` 和只读 `/recover`，所以路径会自动匹配。
+
+### PG 重建后必须清理 Barman 服务目录
+
+如果 PG 被完全重建并产生新的 system identifier，Barman 中旧 WAL 会与新 PG 冲突。测试环境里可以直接删除这个服务器目录后重建备份链。
 
 ```bash
 docker exec barman rm -rf /var/lib/barman/streaming-backup-server
-docker exec barman barman cron                                        # 重建目录结构
+docker exec barman barman cron
 docker exec barman barman receive-wal --create-slot streaming-backup-server
 docker exec barman barman cron
 sleep 30
-docker exec barman barman check streaming-backup-server               # 验证全部 OK
+docker exec barman barman check streaming-backup-server
 ```
 
-### 5. PITR 恢复时 restore_command 自动生效
+## 本地恢复流程
 
-barman 执行 PITR 恢复时，会将 WAL 文件放在 `/recover/barman_wal/` 并写入：
-
-```
-restore_command = 'cp /recover/barman_wal/%f %p'
-```
-
-pg-recovered 的 compose 配置中已额外挂载 `./recover:/recover:ro`，使该路径在容器内直接可用，无需手动修改。
-
-远程恢复场景中，远端 PG 使用命名卷时，可以把同一个 PG 数据卷额外挂载到 `/recover:ro`，同样无需改 conf。
-
----
-
-## 恢复场景 A：恢复到独立 PG 实例（pg-recovered）
-
-适用于：验证备份完整性、数据审计、PITR 到指定时间点。原 PG 不受影响。
-
-### 前置条件
-
-- barman 容器正在运行
-- 确认有可用备份：`docker exec barman barman list-backups streaming-backup-server`
-
-### 步骤
-
-#### 1. 停止旧实例（如有）并清空 /recover
+### 1. 确认可用备份
 
 ```bash
 cd barman
-docker compose --profile recovery stop pg-recovered 2>/dev/null
-docker exec barman bash -c "rm -rf /recover/* /recover/.*"
+docker exec barman barman list-backups streaming-backup-server
+docker exec barman barman check streaming-backup-server
 ```
 
-#### 2. 执行恢复
-
-**恢复到最新状态**：
+### 2. 停止验证实例并删除恢复卷
 
 ```bash
-docker exec barman barman recover streaming-backup-server latest /recover
+docker compose --profile recovery stop pg-recovered 2>/dev/null || true
+docker compose --profile recovery rm -sf pg-recovered fix-recover-permissions barman-restore
+docker volume rm barman_barman-recover 2>/dev/null || true
 ```
 
-**或者 PITR 到指定时间点**：
+### 3. 恢复最新备份
 
 ```bash
-docker exec barman barman recover \
+docker compose --profile recovery run --rm barman-restore \
+  barman restore streaming-backup-server latest /recover
+```
+
+### 4. 或者恢复到指定时间点
+
+```bash
+docker compose --profile recovery run --rm barman-restore \
+  barman restore \
   --target-time "<TIMESTAMP>" \
   --target-action=promote \
   streaming-backup-server latest /recover
 ```
 
-> 时间戳格式示例：`2026-03-10 13:00:04.656887+00`
->
-> 获取当前 PG 时间：`docker exec postgres psql -U postgres -t -A -c "SELECT now()"`
-
-#### 3. 启动 pg-recovered
+时间戳可以从当前 PG 获取。
 
 ```bash
+docker exec postgres psql -U postgres -t -A -c "SELECT now()"
+```
+
+### 5. 修复权限并启动本地恢复实例
+
+```bash
+docker compose --profile recovery run --rm fix-recover-permissions
 docker compose --profile recovery up -d pg-recovered
 ```
 
-> PITR 恢复的 `restore_command` 指向 `/recover/barman_wal/`，pg-recovered 已挂载 `./recover:/recover:ro`，路径自动匹配。
-
-#### 4. 验证恢复结果
+### 6. 验证恢复结果
 
 ```bash
 sleep 8
-
-# 确认已完成恢复
 docker exec pg-recovered psql -U postgres -c "SELECT pg_is_in_recovery()"
-# 期望: f
-
-# 验证数据
 docker exec pg-recovered psql -U postgres -c "
   SELECT 'users' as tbl, count(*) FROM users
   UNION ALL SELECT 'products', count(*) FROM products
@@ -131,151 +113,41 @@ docker exec pg-recovered psql -U postgres -c "
 "
 ```
 
-PITR 场景下，验证时间边界前后的数据是否符合预期。
+`pg_is_in_recovery()` 期望返回 `f`。PITR 场景下，再验证目标时间前后的业务数据是否符合预期。
 
-#### 5. 使用完毕后清理
+### 7. 清理本地恢复实例
 
 ```bash
 docker compose --profile recovery stop pg-recovered
-docker exec barman bash -c "rm -rf /recover/* /recover/.*"
-```
----
-
-## 恢复场景 B：本地恢复 + rsync 到远端 PG 服务器
-
-适用于：barman 和 PG 在不同机器上（通过 Tailscale 连接），需要恢复到远端 PG 服务器。
-
-策略：先在 barman 本地恢复到 `/recover`，再通过宿主机 rsync（走 Tailscale SSH）传到远端。无需在 barman 容器内安装 SSH 或管理密钥。
-
-### 前置条件
-
-- barman 容器正在运行
-- 确认有可用备份：`docker exec barman barman list-backups streaming-backup-server`
-- barman 宿主机已加入 Tailscale，能 SSH 到远端
-- 远端 PG 已停止
-
-### 远端 PG compose.yml 建议配置
-
-为了让 PITR 恢复时 `restore_command` 路径自动生效，远端 PG 的 compose.yml 建议把同一个数据卷额外挂载到 `/recover:ro`：
-
-```yaml
-services:
-  postgres:
-    build: .
-    volumes:
-      - pg-data:/var/lib/postgresql/data
-      - pg-data:/recover:ro           # PITR 时 restore_command 指向 /recover/barman_wal/
-
-volumes:
-  pg-data:
+docker compose --profile recovery rm -sf pg-recovered fix-recover-permissions barman-restore
+docker volume rm barman_barman-recover 2>/dev/null || true
 ```
 
-这样无论 latest 还是 PITR 恢复，把恢复结果导入 `pg-data` 后直接启动即可，无需修改任何配置文件。
+## 把本地恢复结果交给远端
 
-### 步骤
+主流程只负责恢复到本地命名卷并通过 `pg-recovered` 验证。需要迁移到远端时，建议在确认本地验证通过后，再把 `barman-recover` 命名卷内容导出到临时目录或归档文件，并在远端导入目标 PostgreSQL 数据卷，导入后同样确保文件 owner 是远端 PostgreSQL 容器里的 `postgres` 用户。
 
-#### 1. 本地恢复到 /recover
+一个简单方式是在 Barman 宿主机导出归档。
 
 ```bash
-cd barman
-docker exec barman bash -c "rm -rf /recover/* /recover/.*"
+docker run --rm \
+  -v barman_barman-recover:/src:ro \
+  -v "$PWD":/out \
+  postgres:17 bash -c "cd /src && tar -cf /out/pg-recover.tar ."
 ```
 
-**恢复到最新状态**：
+远端导入时先停止 PostgreSQL，再清空目标数据卷、解包、修复权限并启动。远端 compose 项目名不同的话，数据卷名也会不同，需要按实际项目名替换。
 
 ```bash
-docker exec barman barman recover streaming-backup-server latest /recover
-```
-
-**或者 PITR 到指定时间点**：
-
-```bash
-docker exec barman barman recover \
-  --target-time "<TIMESTAMP>" \
-  --target-action=promote \
-  streaming-backup-server latest /recover
-```
-
-> 时间戳格式示例：`2026-03-10 13:00:04.656887+00`
-
-#### 2.（可选）本地验证
-
-恢复完成后可以先用 pg-recovered 在本地验证数据完整性，确认无误后再传到远端：
-
-```bash
-docker compose --profile recovery up -d pg-recovered
-sleep 8
-docker exec pg-recovered psql -U postgres -c "
-  SELECT 'users' as tbl, count(*) FROM users
-  UNION ALL SELECT 'products', count(*) FROM products
-  UNION ALL SELECT 'orders', count(*) FROM orders;
-"
-docker compose --profile recovery stop pg-recovered
-```
-
-#### 3. rsync 到远端临时目录
-
-从 barman **宿主机**执行（`./recover` 是 bind mount，宿主机可直接访问）：
-
-```bash
-rsync -avz --delete ./recover/ <user>@<ts-hostname>:/tmp/pg-recover/
-```
-
-> - `<ts-hostname>` 是远端机器的 Tailscale hostname
-> - Tailscale SSH 无需管理密钥，宿主机已加入 Tailscale 即可直接连接
-> - `--delete` 确保远端临时目录与本地恢复结果完全一致
-
-#### 4. 导入远端 PG 数据卷
-
-在远端机器上执行，默认安装目录名为 `pg` 时数据卷名是 `pg_pg-data`：
-
-```bash
-cd /path/to/pg
 docker compose down
 docker run --rm \
   -v pg_pg-data:/dst \
-  -v /tmp/pg-recover:/src:ro \
-  postgres:17 bash -c "find /dst -mindepth 1 -delete && cp -a /src/. /dst/"
-```
-
-#### 5. 启动远端 PG 并验证
-
-```bash
-# 在远端机器上
-cd /path/to/pg
+  -v "$PWD":/in:ro \
+  postgres:17 bash -c "find /dst -mindepth 1 -delete && tar -xf /in/pg-recover.tar -C /dst && chown -R postgres:postgres /dst && find /dst -type d -exec chmod 700 {} +"
 docker compose up -d
-sleep 5
-
-docker exec postgres psql -U postgres -c "SELECT pg_is_in_recovery()"
-# 期望: f
-
-docker exec postgres psql -U postgres -c "
-  SELECT 'users' as tbl, count(*) FROM users
-  UNION ALL SELECT 'products', count(*) FROM products
-  UNION ALL SELECT 'orders', count(*) FROM orders;
-"
 ```
 
-#### 6. 恢复后重建备份链
-
-PG 恢复后 system identifier 不变，barman 可以继续工作。建议立即创建新的 base backup：
-
-```bash
-# 在 barman 机器上
-docker exec barman barman cron
-sleep 30
-docker exec barman barman backup streaming-backup-server --wait
-```
-
-#### 7. 清理 barman 本地 /recover
-
-```bash
-docker exec barman bash -c "rm -rf /recover/* /recover/.*"
-```
-
----
-
-## 附录：常用 barman 命令
+## 常用命令
 
 ```bash
 # 查看备份列表
@@ -287,7 +159,7 @@ docker exec barman barman show-backup streaming-backup-server latest
 # 全面检查
 docker exec barman barman check streaming-backup-server
 
-# 手动触发 WAL 归档
+# 手动触发 WAL 切换和归档维护
 docker exec barman barman switch-wal --force streaming-backup-server
 docker exec barman barman cron
 
@@ -296,4 +168,32 @@ docker exec barman barman replication-status streaming-backup-server
 
 # 手动创建备份
 docker exec barman barman backup streaming-backup-server --wait
+```
+
+## 故障排查
+
+### receive-wal running 短暂失败
+
+刚启动后 `barman check` 中的 `receive-wal running` 可能短暂显示 FAILED，等待 15 到 30 秒后重试即可。如果持续失败，检查 Barman 日志。
+
+```bash
+docker exec barman tail -20 /var/log/barman/barman.log
+```
+
+### WAL system identifier mismatch
+
+这通常是 PG 被重建过，但 Barman 还保留旧实例 WAL。测试环境可以删除 `/var/lib/barman/streaming-backup-server` 后重新创建复制槽和 base backup。
+
+### could not locate required checkpoint record
+
+检查是否恢复到了空目录、是否缺少 PITR 需要的 WAL、`postgresql.auto.conf` 中的 `restore_command` 是否指向 `/recover/barman_wal/%f`，以及 `pg-recovered` 是否已经挂载同一个 `barman-recover` 命名卷到 `/recover:ro`。
+
+### Permission denied
+
+先停掉 `pg-recovered`，再重新执行权限修复服务。
+
+```bash
+docker compose --profile recovery stop pg-recovered
+docker compose --profile recovery run --rm fix-recover-permissions
+docker compose --profile recovery up -d pg-recovered
 ```

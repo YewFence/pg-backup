@@ -21,15 +21,14 @@
 │       ├── cloud-backup-delete.sh  # 清理旧备份
 │       └── sidecar-entrypoint.sh   # sidecar 入口
 ├── barman/                     # Barman 客户端（备份工具）
-│   ├── Dockerfile              # barman 用户 UID/GID 统一为 999
-│   ├── docker-compose.yml      # Barman + Tailscale sidecar
+│   ├── Dockerfile              # Barman 运行环境
+│   ├── compose.yml             # Barman + Tailscale sidecar
 │   ├── setup-pgpass.sh         # 配置数据库密码
 │   ├── health-check.py         # 健康检查 HTTP 服务
 │   ├── entrypoint.sh           # 容器启动脚本
 │   ├── config/                 # 挂载到 /etc/barman.d
 │   │   ├── streaming-backup-server.conf
 │   │   └── barman.crontab      # 定时任务配置
-│   ├── recover/                # 本地恢复中转目录
 │   ├── RECOVERY-GUIDE.md       # 详细恢复指南
 │   ├── E2E-TEST.md             # 端到端测试流程
 │   └── .env                    # Tailscale auth key（不提交）
@@ -37,8 +36,9 @@
 ```
 
 **重要说明**：
-- barman 容器内的 barman 用户 UID/GID 为 999，与 postgres:17 镜像中的 postgres 用户一致
-- 这样无论是本地恢复（pg-recovered）还是 rsync 远程恢复，文件权限都自动正确，无需 chown
+- Barman 备份数据使用 `barman-data` 命名卷
+- 本地恢复中转数据使用 `barman-recover` 命名卷
+- 本地恢复后先运行 `fix-recover-permissions`，再启动 `pg-recovered`
 - PG 主数据和云恢复数据使用 Docker 命名卷，不再在仓库里生成 `pgdata` 和 `pgdata-recovery` 目录
 
 ## 快速开始
@@ -136,18 +136,29 @@ docker exec barman barman status streaming-backup-server
 docker exec barman barman replication-status streaming-backup-server
 
 # 恢复到指定时间点（示例）
-docker exec barman barman recover streaming-backup-server latest /var/lib/barman/recover --target-time "2026-03-10 12:00:00"
+docker compose --profile recovery rm -sf pg-recovered fix-recover-permissions barman-restore
+docker volume rm barman_barman-recover 2>/dev/null || true
+docker compose --profile recovery run --rm barman-restore \
+  barman restore \
+  --target-time "2026-03-10 12:00:00" \
+  --target-action=promote \
+  streaming-backup-server latest /recover
+docker compose --profile recovery run --rm fix-recover-permissions
 ```
 
-### 异地恢复验证
+### 本地恢复验证
 
 在 Barman 本机恢复备份并启动一个临时 PG 来验证数据完整性。
 
 ```bash
-# 1. 恢复最新备份到共享卷
-docker exec barman barman recover streaming-backup-server latest /recover
+# 1. 恢复最新备份到命名卷
+docker compose --profile recovery rm -sf pg-recovered fix-recover-permissions barman-restore
+docker volume rm barman_barman-recover 2>/dev/null || true
+docker compose --profile recovery run --rm barman-restore \
+  barman restore streaming-backup-server latest /recover
 
-# 2. 拉起验证用 PG（端口 5433，profile 控制，平时不启动）
+# 2. 修复权限并拉起验证用 PG（端口 5433，profile 控制，平时不启动）
+docker compose --profile recovery run --rm fix-recover-permissions
 docker compose --profile recovery up -d pg-recovered
 
 # 3. 验证数据
@@ -160,13 +171,14 @@ docker exec barman psql -h pg-recovered -U postgres -c "SELECT count(*) FROM you
 psql -h localhost -p 5433 -U postgres
 
 # 4. 验证完毕，关掉验证 PG
-docker compose --profile recovery down
+docker compose --profile recovery stop pg-recovered
 
-# 如需重新恢复，先清理 recover 再重来
-docker exec barman bash -c "rm -rf /recover/* /recover/.*"
+# 如需重新恢复，先删除恢复卷再重来
+docker compose --profile recovery rm -sf pg-recovered fix-recover-permissions barman-restore
+docker volume rm barman_barman-recover 2>/dev/null || true
 ```
 
-> PITR（恢复到指定时间点）：在 recover 命令后加 `--target-time "2026-03-10 14:30:00"`
+> PITR（恢复到指定时间点）：在 `restore` 命令中加 `--target-time "2026-03-10 14:30:00"` 和 `--target-action=promote`
 
 ### PostgreSQL 配置导出
 

@@ -44,7 +44,7 @@ docker compose up -d
 ```
 
 > 特殊构建：
-> 如果需要在构建时修改参数，可以注释掉 `docker-compose.yml` 中的 `build` 部分，直接使用 `docker build` 构建镜像：
+> 如果需要在构建时修改参数，可以注释掉 `compose.yml` 中的 `build` 部分，直接使用 `docker build` 构建镜像：
 > 例如使用代理构建：
 > ```bash
 > docker build \--add-host=host.docker.internal:host-gateway \
@@ -68,13 +68,21 @@ docker exec barman barman backup streaming-backup-server
 docker exec barman barman list-backups streaming-backup-server
 
 # 恢复最新备份
-docker exec barman barman recover streaming-backup-server latest /recover
+docker compose --profile recovery rm -sf pg-recovered fix-recover-permissions barman-restore
+docker volume rm barman_barman-recover 2>/dev/null || true
+docker compose --profile recovery run --rm barman-restore \
+  barman restore streaming-backup-server latest /recover
+docker compose --profile recovery run --rm fix-recover-permissions
 
 # PITR 恢复到指定时间点
-docker exec barman barman recover \
+docker compose --profile recovery rm -sf pg-recovered fix-recover-permissions barman-restore
+docker volume rm barman_barman-recover 2>/dev/null || true
+docker compose --profile recovery run --rm barman-restore \
+  barman restore \
   --target-time "2026-03-10 12:00:00" \
   --target-action=promote \
   streaming-backup-server latest /recover
+docker compose --profile recovery run --rm fix-recover-permissions
 ```
 
 ### 查看状态
