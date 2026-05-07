@@ -137,8 +137,8 @@ docker exec barman barman cron
 cd pg
 docker compose down
 
-# 清空 pgdata（UID 999 所有，普通用户无法直接删除）
-docker run --rm -v $(pwd)/pgdata:/data postgres:17 bash -c "rm -rf /data/* /data/.*"
+# 清空 PG 数据卷
+docker run --rm -v pg_pg-data:/data postgres:17 bash -c "find /data -mindepth 1 -delete"
 
 # 验证 barman 备份仍在
 docker exec barman barman list-backups streaming-backup-server
@@ -153,14 +153,14 @@ docker exec barman bash -c "rm -rf /recover/* /recover/.*"
 # 恢复
 docker exec barman barman recover streaming-backup-server latest /recover
 
-# 复制到 pgdata
+# 复制到 PG 数据卷
 docker run --rm \
   -v $(pwd)/../barman/recover:/src:ro \
-  -v $(pwd)/pgdata:/dst \
+  -v pg_pg-data:/dst \
   postgres:17 bash -c "cp -a /src/. /dst/"
 
 # 检查 postgresql.auto.conf，latest 恢复通常不含 restore_command
-docker run --rm -v $(pwd)/pgdata:/data postgres:17 cat /data/postgresql.auto.conf
+docker run --rm -v pg_pg-data:/data postgres:17 cat /data/postgresql.auto.conf
 
 # 启动 PG
 docker compose up -d

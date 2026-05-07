@@ -11,7 +11,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - ./pgdata:/var/lib/postgresql/data
+      - pg-data:/var/lib/postgresql/data
       - ./initdb:/docker-entrypoint-initdb.d
       - ./pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
       - ./postgresql.conf:/etc/postgresql/postgresql.conf:ro
@@ -33,7 +33,6 @@ services:
       PG_USER: barman
     volumes:
       - wal-archive:/archive
-      - ./pgdata:/var/lib/postgresql/data:ro
 
   pg-recovery:
     build:
@@ -52,9 +51,11 @@ services:
     ports:
       - "5433:5432"
     volumes:
-      - ./pgdata-recovery:/var/lib/postgresql/data
+      - pg-recovery-data:/var/lib/postgresql/data
 
 volumes:
+  pg-data:
+  pg-recovery-data:
   wal-archive:
 
 networks:

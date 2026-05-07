@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:17
+    build: .
     container_name: postgres
     restart: unless-stopped
     env_file: .env
@@ -25,7 +25,7 @@ services:
       start_period: 30s
     volumes:
       # 数据目录
-      - ./pgdata:/var/lib/postgresql/data
+      - pg-data:/var/lib/postgresql/data
       # 自动初始化，创建 Barman 用户
       - ./initdb:/docker-entrypoint-initdb.d
       # Barman 相关配置
@@ -63,7 +63,6 @@ services:
       PG_USER: barman
     volumes:
       - wal-archive:/archive
-      - ./pgdata:/var/lib/postgresql/data:ro
     networks:
       - pg-net
 
@@ -83,11 +82,13 @@ services:
     ports:
       - "5433:5432"
     volumes:
-      - ./pgdata-recovery:/var/lib/postgresql/data
+      - pg-recovery-data:/var/lib/postgresql/data
     networks:
       - pg-net
 
 volumes:
+  pg-data:
+  pg-recovery-data:
   wal-archive:
 
 networks:

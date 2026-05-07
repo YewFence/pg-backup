@@ -9,6 +9,7 @@
 .
 ├── pg/                         # PostgreSQL 17 数据库（被备份的目标）
 │   ├── compose.yml
+│   ├── Dockerfile              # 预创建 /archive 并设置 WAL 归档权限
 │   ├── postgresql.conf
 │   ├── pg_hba.conf
 │   ├── initdb/
@@ -38,6 +39,7 @@
 **重要说明**：
 - barman 容器内的 barman 用户 UID/GID 为 999，与 postgres:17 镜像中的 postgres 用户一致
 - 这样无论是本地恢复（pg-recovered）还是 rsync 远程恢复，文件权限都自动正确，无需 chown
+- PG 主数据和云恢复数据使用 Docker 命名卷，不再在仓库里生成 `pgdata` 和 `pgdata-recovery` 目录
 
 ## 快速开始
 
@@ -160,8 +162,8 @@ psql -h localhost -p 5433 -U postgres
 # 4. 验证完毕，关掉验证 PG
 docker compose --profile recovery down
 
-# 如需重新恢复，先清理卷再重来
-docker volume rm barman_pg-recover
+# 如需重新恢复，先清理 recover 再重来
+docker exec barman bash -c "rm -rf /recover/* /recover/.*"
 ```
 
 > PITR（恢复到指定时间点）：在 recover 命令后加 `--target-time "2026-03-10 14:30:00"`

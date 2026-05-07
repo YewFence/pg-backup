@@ -182,8 +182,8 @@ docker exec barman-cloud /usr/local/bin/wal-push.sh
 # 停止 PG（保留 barman-cloud sidecar 用于后续恢复）
 docker compose down
 
-# 清空 pgdata
-docker run --rm -v $(pwd)/pgdata:/data postgres:17 bash -c "rm -rf /data/* /data/.*"
+# 清空 PG 数据卷
+docker run --rm -v pg_pg-data:/data postgres:17 bash -c "find /data -mindepth 1 -delete"
 
 # 验证 RustFS 中的备份仍在
 docker exec rustfs-test find /data/pg-backup-test/pg/base -type f
@@ -209,10 +209,10 @@ docker compose --profile cloud stop barman-cloud
 docker compose --profile cloud run -d --name barman-cloud \
   -e RECOVERY_MODE=true barman-cloud
 
-# 2. 使用 pg-barman-cloud 镜像恢复 base backup 到 pgdata
+# 2. 使用 pg-barman-cloud 镜像恢复 base backup 到 PG 数据卷
 docker run --rm \
   --network pg_default \
-  -v $(pwd)/pgdata:/recover \
+  -v pg_pg-data:/recover \
   -e AWS_ACCESS_KEY_ID=rustfsadmin \
   -e AWS_SECRET_ACCESS_KEY=ChangeMe123! \
   -e AWS_DEFAULT_REGION=us-east-1 \
@@ -247,7 +247,7 @@ done
 docker run --rm -v pg_wal-archive:/archive postgres:17 ls -lh /archive/
 
 # 4. 配置 restore_command（使用本地 cp）
-docker run --rm -v $(pwd)/pgdata:/data postgres:17 bash -c "
+docker run --rm -v pg_pg-data:/data postgres:17 bash -c "
 cat > /data/postgresql.auto.conf << 'EOF'
 restore_command = 'cp /archive/%f %p'
 EOF
@@ -278,14 +278,14 @@ docker exec postgres psql -U postgres -c "
 ## Phase 7: Recovery B — PITR 恢复到 Batch 1 之后
 
 ```bash
-# 1. 停止 PG 并清空 pgdata
+# 1. 停止 PG 并清空数据卷
 docker compose down
-docker run --rm -v $(pwd)/pgdata:/data postgres:17 bash -c "rm -rf /data/* /data/.*"
+docker run --rm -v pg_pg-data:/data postgres:17 bash -c "find /data -mindepth 1 -delete"
 
 # 2. 恢复 base backup
 docker run --rm \
   --network pg_default \
-  -v $(pwd)/pgdata:/recover \
+  -v pg_pg-data:/recover \
   -e AWS_ACCESS_KEY_ID=rustfsadmin \
   -e AWS_SECRET_ACCESS_KEY=ChangeMe123! \
   -e AWS_DEFAULT_REGION=us-east-1 \
@@ -296,7 +296,7 @@ docker run --rm \
     s3://pg-backup-test pg latest /recover
 
 # 3. 配置 PITR 恢复参数（使用 Phase 4 记录的时间戳）
-docker run --rm -v $(pwd)/pgdata:/data postgres:17 bash -c "
+docker run --rm -v pg_pg-data:/data postgres:17 bash -c "
 cat > /data/postgresql.auto.conf << 'EOF'
 restore_command = 'cp /archive/%f %p'
 recovery_target_time = '$PITR_TS'
@@ -381,9 +381,8 @@ docker run --rm --network pg_default minio/mc mb rustfs/pg-backup-test
 docker compose --profile cloud down
 docker compose -f rustfs-compose.yml down
 
-# 清空 pgdata 和 archive 卷
-docker run --rm -v $(pwd)/pgdata:/data postgres:17 bash -c "rm -rf /data/* /data/.*"
-docker volume rm pg_wal-archive
+# 删除 PG 数据卷和 archive 卷
+docker volume rm pg_pg-data pg_pg-recovery-data pg_wal-archive 2>/dev/null || true
 
 # 删除 RustFS 数据卷（可选）
 docker volume rm pg_rustfs-data

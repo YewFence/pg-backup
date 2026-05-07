@@ -5,7 +5,7 @@
 ```
 pg/                         barman/
 ├── compose.yml             ├── compose.yml
-├── pgdata/  ← PG 数据      ├── config/          ← barman 服务器配置
+├── (pg-data) ← PG 数据卷   ├── config/          ← barman 服务器配置
 ├── initdb/seed.sql         ├── recover/         ← 恢复中转目录
 └── ...                     └── (barman-data)     ← 命名卷，barman 自管
 ```
@@ -62,7 +62,7 @@ restore_command = 'cp /recover/barman_wal/%f %p'
 
 pg-recovered 的 compose 配置中已额外挂载 `./recover:/recover:ro`，使该路径在容器内直接可用，无需手动修改。
 
-远程恢复场景中，远端 PG 的 compose.yml 也建议额外挂载 `./pgdata:/recover:ro`，同样无需改 conf。
+远程恢复场景中，远端 PG 使用命名卷时，可以把同一个 PG 数据卷额外挂载到 `/recover:ro`，同样无需改 conf。
 
 ---
 
@@ -156,18 +156,21 @@ docker exec barman bash -c "rm -rf /recover/* /recover/.*"
 
 ### 远端 PG compose.yml 建议配置
 
-为了让 PITR 恢复时 `restore_command` 路径自动生效，远端 PG 的 compose.yml 建议额外挂载一个 `/recover:ro`：
+为了让 PITR 恢复时 `restore_command` 路径自动生效，远端 PG 的 compose.yml 建议把同一个数据卷额外挂载到 `/recover:ro`：
 
 ```yaml
 services:
   postgres:
-    image: postgres:17
+    build: .
     volumes:
-      - ./pgdata:/var/lib/postgresql/data
-      - ./pgdata:/recover:ro          # PITR 时 restore_command 指向 /recover/barman_wal/
+      - pg-data:/var/lib/postgresql/data
+      - pg-data:/recover:ro           # PITR 时 restore_command 指向 /recover/barman_wal/
+
+volumes:
+  pg-data:
 ```
 
-这样无论 latest 还是 PITR 恢复，rsync 过去后直接启动即可，无需修改任何配置文件。
+这样无论 latest 还是 PITR 恢复，把恢复结果导入 `pg-data` 后直接启动即可，无需修改任何配置文件。
 
 ### 步骤
 
@@ -210,19 +213,32 @@ docker exec pg-recovered psql -U postgres -c "
 docker compose --profile recovery stop pg-recovered
 ```
 
-#### 3. rsync 到远端
+#### 3. rsync 到远端临时目录
 
 从 barman **宿主机**执行（`./recover` 是 bind mount，宿主机可直接访问）：
 
 ```bash
-rsync -avz --delete ./recover/ <user>@<ts-hostname>:/path/to/pg/pgdata/
+rsync -avz --delete ./recover/ <user>@<ts-hostname>:/tmp/pg-recover/
 ```
 
 > - `<ts-hostname>` 是远端机器的 Tailscale hostname
 > - Tailscale SSH 无需管理密钥，宿主机已加入 Tailscale 即可直接连接
-> - `--delete` 确保远端 pgdata 与本地恢复结果完全一致
+> - `--delete` 确保远端临时目录与本地恢复结果完全一致
 
-#### 4. 启动远端 PG 并验证
+#### 4. 导入远端 PG 数据卷
+
+在远端机器上执行，默认安装目录名为 `pg` 时数据卷名是 `pg_pg-data`：
+
+```bash
+cd /path/to/pg
+docker compose down
+docker run --rm \
+  -v pg_pg-data:/dst \
+  -v /tmp/pg-recover:/src:ro \
+  postgres:17 bash -c "find /dst -mindepth 1 -delete && cp -a /src/. /dst/"
+```
+
+#### 5. 启动远端 PG 并验证
 
 ```bash
 # 在远端机器上
@@ -240,7 +256,7 @@ docker exec postgres psql -U postgres -c "
 "
 ```
 
-#### 5. 恢复后重建备份链
+#### 6. 恢复后重建备份链
 
 PG 恢复后 system identifier 不变，barman 可以继续工作。建议立即创建新的 base backup：
 
@@ -251,7 +267,7 @@ sleep 30
 docker exec barman barman backup streaming-backup-server --wait
 ```
 
-#### 6. 清理 barman 本地 /recover
+#### 7. 清理 barman 本地 /recover
 
 ```bash
 docker exec barman bash -c "rm -rf /recover/* /recover/.*"

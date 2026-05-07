@@ -20,7 +20,8 @@
 
 ```bash
 cd pg
-rm -rf pgdata-recovery/*
+docker compose --profile recovery down
+docker volume rm pg_pg-recovery-data 2>/dev/null || true
 ```
 
 #### 2. 恢复 base backup
@@ -165,7 +166,8 @@ BACKUP_ID="${1:-latest}"
 TARGET_TIME="${2:-}"
 
 echo "==> 清空恢复目录"
-rm -rf pgdata-recovery/*
+docker compose --profile recovery down
+docker volume rm pg_pg-recovery-data 2>/dev/null || true
 
 echo "==> 恢复 base backup: $BACKUP_ID"
 docker compose --profile recovery run --rm pg-recovery \
@@ -241,4 +243,4 @@ docker exec pg-recovery psql -U postgres -c "SELECT pg_is_in_recovery();"
 1. **网络连通性**：pg-recovery 容器需要能访问 S3 endpoint（RustFS 或云端 S3）
 2. **凭证配置**：确保 `.env` 中的 S3 凭证正确
 3. **端口冲突**：pg-recovery 使用 5433 端口，避免与生产 PG（5432）冲突
-4. **数据隔离**：恢复数据存储在 `./pgdata-recovery`，与生产数据（`./pgdata`）完全隔离
+4. **数据隔离**：恢复数据存储在 `pg_pg-recovery-data` 命名卷，与生产数据卷 `pg_pg-data` 完全隔离
