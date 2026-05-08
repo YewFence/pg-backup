@@ -11,11 +11,11 @@ PATH=/usr/local/bin:/usr/bin:/bin
 # 测试任务：每分钟执行一次，输出当前时间以验证 cron 是否正常工作
 # * * * * * echo "[$(date '+%Y-%m-%d %H:%M:%S')] Barman cron test is working"
 
-# 基础备份：每天凌晨 2 点创建一个完整备份
-0 2 * * * barman backup streaming-backup-server
+# 基础备份：每天凌晨 2 点为所有已配置 server 创建完整备份
+0 2 * * * barman-for-each-server backup
 
-# 可选：每周日凌晨 3 点验证最新备份的完整性
-0 3 * * 0 barman verify-backup streaming-backup-server latest
+# 可选：每周日凌晨 3 点验证所有已配置 server 的最新备份完整性
+0 3 * * 0 barman-for-each-server verify-backup latest
 
 # 可选：每月 1 号凌晨 4 点生成备份清单
-# 0 4 1 * * barman generate-manifest streaming-backup-server latest
+# 0 4 1 * * barman-for-each-server generate-manifest latest

@@ -27,7 +27,8 @@
 │   ├── health-check.py         # 健康检查 HTTP 服务
 │   ├── entrypoint.sh           # 容器启动脚本
 │   ├── config/                 # 挂载到 /etc/barman.d
-│   │   ├── streaming-backup-server.conf
+│   │   ├── *.conf              # Barman server 配置，一个 PostgreSQL 一个 server 段
+│   │   ├── pgpass              # 各 PostgreSQL 的连接密码
 │   │   └── barman.crontab      # 定时任务配置
 │   ├── RECOVERY-GUIDE.md       # 详细恢复指南
 │   ├── E2E-TEST.md             # 端到端测试流程
@@ -76,6 +77,8 @@ cd ../barman && docker compose up -d
 ```
 
 Barman 容器会加入你的 Tailscale 网络，通过宿主机的 Tailscale hostname 连接 PostgreSQL。请确认 ACL 配置正常
+
+同一个 Barman host 备份多个 PostgreSQL 时，在 `config/` 里为每个 PostgreSQL 增加一个 `.conf` 文件，并在 `config/pgpass` 里追加对应的 `barman` 和 `streaming_barman` 两行密码即可，定时任务会自动遍历所有 `config/*.conf` 里的 server。
 
 
 3. 手动触发 Barman Cron 维护以创建 Slot 与进行第一次 WAL 归档
@@ -195,9 +198,7 @@ docker exec postgres cat /var/lib/postgresql/data/pg_hba.conf > pg/pg_hba.conf
 Barman 容器内运行 cron 守护进程，定时任务配置文件位于 `barman/config/barman.crontab`。
 
 默认任务（`barman.crontab.example`）：
-- 每分钟执行 `barman cron`：归档 WAL 文件、清理过期备份
-- 每天凌晨 2 点执行 `barman backup`：创建完整的基础备份
-- 每周日凌晨 3 点执行 `barman verify-backup`：验证备份完整性
+每分钟执行 `barman cron` 完成 WAL 归档和过期备份清理，每天凌晨 2 点执行 `barman-for-each-server backup` 为所有已配置 server 创建基础备份，每周日凌晨 3 点执行 `barman-for-each-server verify-backup latest` 验证所有 server 的最新备份完整性。
 
 修改定时任务后需要重启容器：
 ```bash
@@ -213,9 +214,7 @@ Barman 容器内置 HTTP 健康检查服务，定时运行 `barman check` 并缓
 > 但**容器首次启动时**，第一次 check 尚未完成，端点会返回 503 直到首次检查结束（~30s）。
 > 监控系统建议配置：超时 ≥ 60s，失败重试 ≥ 3 次后再告警，避免误报。
 
-端点：`http://<barman-tailscale-ip>:8000/`
-- `200` — 备份状态正常
-- `503` — 检查失败 / 结果过期 / 首次检查未完成
+端点 `http://<barman-tailscale-ip>:8000/` 返回所有 server 的聚合状态，只有全部 server 健康才返回 `200`，任意 server 检查失败、结果过期或首次检查未完成都会返回 `503`。端点 `http://<barman-tailscale-ip>:8000/<server-name>` 只返回同名 server 的状态，适合给每个 PostgreSQL 单独配置监控，未知 server 返回 `404`。
 
 环境变量：
 
@@ -224,11 +223,13 @@ Barman 容器内置 HTTP 健康检查服务，定时运行 `barman check` 并缓
 | `HEALTH_CHECK_PORT` | `8000` | HTTP 监听端口 |
 | `CHECK_INTERVAL` | `300` | 检查间隔（秒） |
 | `FAIL_THRESHOLD` | `3` | 连续失败多少次后才标记为异常 |
-| `BARMAN_SERVER_NAME` | `streaming-backup-server` | barman 服务器名 |
+
+健康检查会自动读取 `config/*.conf` 中的所有 Barman server 段，并逐个运行 `barman check`，返回结果里会按 server 名展示状态。
 
 手动测试：
 ```bash
 curl http://<barman-tailscale-ip>:8000/
+curl http://<barman-tailscale-ip>:8000/streaming-backup-server
 ```
 
 ## S3 云备份（barman-cloud sidecar）

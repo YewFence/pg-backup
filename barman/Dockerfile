@@ -26,9 +26,10 @@ RUN mkdir -p /var/lib/barman /recover /var/log/barman && \
     chown -R barman:barman /var/lib/barman /recover /var/log/barman
 
 COPY setup-pgpass.sh /usr/local/bin/setup-pgpass.sh
+COPY barman-for-each-server.sh /usr/local/bin/barman-for-each-server
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY health-check.py /usr/local/bin/health-check.py
-RUN chmod +x /usr/local/bin/setup-pgpass.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/setup-pgpass.sh /usr/local/bin/barman-for-each-server /usr/local/bin/entrypoint.sh
 
 USER barman
 WORKDIR /var/lib/barman

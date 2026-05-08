@@ -8,6 +8,7 @@ CONF_FILE="$SOURCE_DIR/config/streaming-backup-server.conf"
 CONF_EXAMPLE="$SOURCE_DIR/config/streaming-backup-server.conf.example"
 CRONTAB_FILE="$SOURCE_DIR/config/barman.crontab"
 CRONTAB_EXAMPLE="$SOURCE_DIR/config/barman.crontab.example"
+PGPASS_FILE="$SOURCE_DIR/config/pgpass"
 
 echo "=== Barman 备份端安装向导 ==="
 echo ""
@@ -56,9 +57,16 @@ sed -i "s|^STREAMING_BARMAN_PASSWORD=.*|STREAMING_BARMAN_PASSWORD=${STREAMING_BA
 
 echo "配置已写入 $ENV_FILE"
 
+cat > "$PGPASS_FILE" << EOF
+${PG_HOST}:5432:postgres:barman:${BARMAN_PASSWORD}
+${PG_HOST}:5432:*:streaming_barman:${STREAMING_BARMAN_PASSWORD}
+EOF
+chmod 644 "$PGPASS_FILE"
+echo "pgpass 已生成：$PGPASS_FILE"
+
 # 如果 barman 服务器配置不存在，从 example 复制并替换 host
 if [ ! -f "$CONF_FILE" ] && [ -f "$CONF_EXAMPLE" ]; then
-    sed "s/host=[^ ]*/host=${PG_HOST}/" "$CONF_EXAMPLE" > "$CONF_FILE"
+    sed "/^[[:space:]]*#/! s/host=[^ ]*/host=${PG_HOST}/" "$CONF_EXAMPLE" > "$CONF_FILE"
     echo "Barman 服务器配置已生成：$CONF_FILE（host=${PG_HOST}）"
 fi
 

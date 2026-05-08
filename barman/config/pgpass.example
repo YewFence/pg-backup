@@ -1,0 +1,18 @@
+# .pgpass 文件格式，每行一条记录，使用冒号分隔以下 5 个字段：
+#   hostname:port:database:username:password
+#
+#   hostname  - PostgreSQL 服务器的主机名或 IP 地址
+#   port      - PostgreSQL 服务器监听的端口号
+#   database  - 数据库名称，* 表示匹配所有数据库
+#   username  - 连接 PostgreSQL 使用的用户名
+#   password  - 对应用户的密码
+#
+# 两个默认实例的备份用户（barman 用于基础备份，streaming_barman 用于 WAL 流复制）
+postgres:5432:postgres:barman:barman
+postgres:5432:*:streaming_barman:streaming_barman
+
+# 多个 PostgreSQL 目标时继续追加即可
+# pg-main:5432:postgres:barman:main-password
+# pg-main:5432:*:streaming_barman:main-streaming-password
+# pg-report:5432:postgres:barman:report-password
+# pg-report:5432:*:streaming_barman:report-streaming-password
