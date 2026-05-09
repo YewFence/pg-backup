@@ -3,7 +3,8 @@
   "extends": [
     "config:recommended"
   ],
-  "baseBranches": [
+  "baseBranchPatterns": [
+    "main",
     "image"
   ],
   "customManagers": [
@@ -30,6 +31,26 @@
     }
   ],
   "packageRules": [
+    {
+      "description": "Disable Barman Dockerfile updates on main",
+      "matchBaseBranches": [
+        "main"
+      ],
+      "matchFileNames": [
+        "barman/Dockerfile"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "Disable GitHub Actions updates on image",
+      "matchBaseBranches": [
+        "image"
+      ],
+      "matchManagers": [
+        "github-actions"
+      ],
+      "enabled": false
+    },
     {
       "description": "Group Barman image apt locks",
       "matchManagers": [
@@ -68,19 +89,29 @@
       "platformAutomerge": false
     },
     {
-      "description": "Group Barman image GitHub Actions",
+      "description": "Group GitHub Actions",
       "matchManagers": [
         "github-actions"
       ],
       "matchFileNames": [
         ".github/workflows/*.yml"
       ],
-      "groupName": "barman image github actions",
-      "groupSlug": "barman-image-github-actions",
+      "groupName": "github actions",
+      "groupSlug": "github-actions",
       "automerge": true,
       "automergeType": "pr",
       "automergeStrategy": "squash",
       "platformAutomerge": false
+    },
+    {
+      "description": "Disable Barman compose image updates",
+      "matchManagers": [
+        "docker-compose"
+      ],
+      "matchFileNames": [
+        "barman/compose.yml"
+      ],
+      "enabled": false
     }
   ]
 }
