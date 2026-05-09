@@ -3,18 +3,11 @@ name: Publish Barman Image
 on:
   push:
     branches:
-      - main
+      - image
     paths:
       - ".github/workflows/publish-barman-image.yml"
       - "barman/**"
       - "renovate.json"
-  pull_request:
-    paths:
-      - ".github/workflows/publish-barman-image.yml"
-      - "barman/**"
-      - "renovate.json"
-  schedule:
-    - cron: "18 3 * * 1"
   workflow_dispatch:
 
 concurrency:
@@ -27,6 +20,7 @@ permissions:
 
 jobs:
   publish:
+    if: github.ref == 'refs/heads/image'
     runs-on: ubuntu-latest
 
     steps:
@@ -49,18 +43,23 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Resolve date version tag
+        id: date_version
+        shell: bash
+        run: |
+          echo "tag=$(date -u +'%Y.%m.%d').${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v6.0.0
         with:
           images: ${{ steps.image.outputs.name }}
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ steps.date_version.outputs.tag }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/image' }}
             type=ref,event=branch
             type=ref,event=tag
-            type=ref,event=pr
             type=sha,prefix=sha-
-            type=schedule,pattern={{date 'YYYYMMDD'}}
           labels: |
             org.opencontainers.image.title=barman
             org.opencontainers.image.description=Barman backup service image for PostgreSQL

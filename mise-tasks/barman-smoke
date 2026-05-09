@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="运行 Barman 本地 smoke 测试"
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+exec python3 "$ROOT_DIR/smoke/run.py"

@@ -1,0 +1,41 @@
+name: Sync Image Branch
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: sync-image-branch
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  rebase-image:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Rebase image on main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          if git ls-remote --exit-code --heads origin image >/dev/null; then
+            git fetch origin image
+            git checkout -B image origin/image
+          else
+            git checkout -B image origin/main
+          fi
+          git rebase origin/main
+          git push --force-with-lease origin HEAD:image

@@ -3,6 +3,9 @@
   "extends": [
     "config:recommended"
   ],
+  "baseBranches": [
+    "image"
+  ],
   "customManagers": [
     {
       "customType": "regex",
@@ -40,7 +43,11 @@
         "postgresql-client-17"
       ],
       "groupName": "barman image apt locks",
-      "groupSlug": "barman-image-apt-locks"
+      "groupSlug": "barman-image-apt-locks",
+      "automerge": true,
+      "automergeType": "pr",
+      "automergeStrategy": "squash",
+      "platformAutomerge": false
     },
     {
       "description": "Group Barman image supercronic updates",
@@ -54,7 +61,11 @@
         "aptible/supercronic"
       ],
       "groupName": "barman image supercronic",
-      "groupSlug": "barman-image-supercronic"
+      "groupSlug": "barman-image-supercronic",
+      "automerge": true,
+      "automergeType": "pr",
+      "automergeStrategy": "squash",
+      "platformAutomerge": false
     },
     {
       "description": "Group Barman image GitHub Actions",
@@ -62,10 +73,14 @@
         "github-actions"
       ],
       "matchFileNames": [
-        ".github/workflows/publish-barman-image.yml"
+        ".github/workflows/*.yml"
       ],
       "groupName": "barman image github actions",
-      "groupSlug": "barman-image-github-actions"
+      "groupSlug": "barman-image-github-actions",
+      "automerge": true,
+      "automergeType": "pr",
+      "automergeStrategy": "squash",
+      "platformAutomerge": false
     }
   ]
 }

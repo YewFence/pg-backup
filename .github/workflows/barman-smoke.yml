@@ -1,0 +1,48 @@
+name: Barman Smoke
+
+on:
+  pull_request:
+    branches:
+      - image
+    paths:
+      - ".github/workflows/*.yml"
+      - "barman/**"
+      - "pg/**"
+      - "smoke/**"
+      - "mise-tasks/barman-smoke"
+      - "renovate.json"
+  push:
+    branches:
+      - image
+    paths:
+      - ".github/workflows/*.yml"
+      - "barman/**"
+      - "pg/**"
+      - "smoke/**"
+      - "mise-tasks/barman-smoke"
+      - "renovate.json"
+  workflow_dispatch:
+
+concurrency:
+  group: barman-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6.0.2
+
+      - name: Set up mise
+        uses: jdx/mise-action@v3
+        with:
+          install: false
+
+      - name: Run smoke
+        run: mise run barman-smoke
