@@ -18,7 +18,8 @@ services:
       - barman-net
 
   barman:
-    build: .
+    image: ${BARMAN_IMAGE:-ghcr.io/yewfence/pg-backup/barman:latest}
+    # build: .
     container_name: barman
     init: true
     restart: unless-stopped
@@ -38,7 +39,8 @@ services:
 
   # 一次性恢复服务，避免常驻 barman 容器长期占用恢复卷
   barman-restore:
-    build: .
+    image: ${BARMAN_IMAGE:-ghcr.io/yewfence/pg-backup/barman:latest}
+    # build: .
     profiles: ["recovery"]
     init: true
     network_mode: "service:tailscale"

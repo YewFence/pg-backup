@@ -51,17 +51,16 @@ docker compose restart barman
 ### 启动服务
 
 ```bash
-# 启动，会构建镜像并运行容器
+# 启动，会拉取预构建镜像并运行容器
 docker compose up -d
 ```
 
-> 特殊构建：
-> 如果需要在构建时修改参数，可以注释掉 `compose.yml` 中的 `build` 部分，直接使用 `docker build` 构建镜像：
-> 例如使用代理构建：
+> 如需使用本地构建镜像，可以先构建镜像，再通过 `.env` 覆盖 `BARMAN_IMAGE`：
 > ```bash
-> docker build \--add-host=host.docker.internal:host-gateway \
+> docker build --add-host=host.docker.internal:host-gateway \
     --build-arg HTTP_PROXY="http://host.docker.internal:7890" \
     --build-arg HTTPS_PROXY="http://host.docker.internal:7890" -t barman:latest .
+> echo "BARMAN_IMAGE=barman:latest" >> .env
 > ```
 
 ### 验证连接
