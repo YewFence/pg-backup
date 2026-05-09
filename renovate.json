@@ -104,12 +104,9 @@
       "platformAutomerge": false
     },
     {
-      "description": "Disable Barman compose image updates",
+      "description": "Disable Docker Compose updates",
       "matchManagers": [
         "docker-compose"
-      ],
-      "matchFileNames": [
-        "barman/compose.yml"
       ],
       "enabled": false
     }
