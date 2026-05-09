@@ -1,5 +1,10 @@
 FROM debian:bookworm-slim
 
+# renovate: datasource=deb depName=barman suite=bookworm-pgdg
+ARG BARMAN_VERSION=3.18.0-2.pgdg12+2
+# renovate: datasource=deb depName=postgresql-client-17 suite=bookworm-pgdg
+ARG POSTGRESQL_CLIENT_VERSION=17.9-1.pgdg12+1
+
 RUN apt-get update && \
     apt-get install -y \
     curl \
@@ -9,13 +14,13 @@ RUN apt-get update && \
     && echo "deb [signed-by=/usr/share/keyrings/postgresql-keyring.gpg] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
     && apt-get update && \
     apt-get install -y \
-    barman \
-    barman-cli \
-    postgresql-client-17 \
+    barman=${BARMAN_VERSION} \
+    barman-cli=${BARMAN_VERSION} \
+    postgresql-client-17=${POSTGRESQL_CLIENT_VERSION} \
     && rm -rf /var/lib/apt/lists/*
 
-# 安装 supercronic（容器友好的 cron 替代品）
-ARG SUPERCRONIC_VERSION=v0.2.33
+# renovate: datasource=github-releases depName=aptible/supercronic versioning=semver
+ARG SUPERCRONIC_VERSION=v0.2.45
 RUN curl -fsSL "https://github.com/aptible/supercronic/releases/download/${SUPERCRONIC_VERSION}/supercronic-linux-amd64" \
     -o /usr/local/bin/supercronic \
     && chmod +x /usr/local/bin/supercronic

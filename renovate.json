@@ -1,0 +1,71 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Update locked PGDG apt package versions in the Barman Dockerfile",
+      "managerFilePatterns": [
+        "/^barman\\/Dockerfile$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>deb) depName=(?<depName>[^\\s]+) suite=(?<suite>[^\\s]+)\\s+ARG (?:BARMAN|POSTGRESQL_CLIENT)_VERSION=(?<currentValue>[^\\s]+)"
+      ],
+      "registryUrlTemplate": "https://apt.postgresql.org/pub/repos/apt?suite={{suite}}&components=main&binaryArch=amd64"
+    },
+    {
+      "customType": "regex",
+      "description": "Update the locked supercronic release in the Barman Dockerfile",
+      "managerFilePatterns": [
+        "/^barman\\/Dockerfile$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>github-releases) depName=(?<depName>[^\\s]+) versioning=(?<versioning>[^\\s]+)\\s+ARG SUPERCRONIC_VERSION=(?<currentValue>[^\\s]+)"
+      ]
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Group Barman image apt locks",
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "matchFileNames": [
+        "barman/Dockerfile"
+      ],
+      "matchPackageNames": [
+        "barman",
+        "postgresql-client-17"
+      ],
+      "groupName": "barman image apt locks",
+      "groupSlug": "barman-image-apt-locks"
+    },
+    {
+      "description": "Group Barman image supercronic updates",
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "matchFileNames": [
+        "barman/Dockerfile"
+      ],
+      "matchPackageNames": [
+        "aptible/supercronic"
+      ],
+      "groupName": "barman image supercronic",
+      "groupSlug": "barman-image-supercronic"
+    },
+    {
+      "description": "Group Barman image GitHub Actions",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchFileNames": [
+        ".github/workflows/publish-barman-image.yml"
+      ],
+      "groupName": "barman image github actions",
+      "groupSlug": "barman-image-github-actions"
+    }
+  ]
+}
