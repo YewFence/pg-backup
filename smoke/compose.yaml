@@ -33,8 +33,8 @@ services:
       HEALTH_CHECK_PORT: 8000
       CHECK_INTERVAL: 30
       FAIL_THRESHOLD: 1
-      BARMAN_UID: 999
-      BARMAN_GID: 999
+      BARMAN_UID: 1000
+      BARMAN_GID: 1000
       BARMAN_FIX_OWNERSHIP: "true"
     volumes:
       - barman-data:/var/lib/barman

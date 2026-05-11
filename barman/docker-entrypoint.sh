@@ -17,8 +17,8 @@ is_true() {
 }
 
 configure_barman_user() {
-    local desired_uid="${BARMAN_UID:-999}"
-    local desired_gid="${BARMAN_GID:-999}"
+    local desired_uid="${BARMAN_UID:-1000}"
+    local desired_gid="${BARMAN_GID:-1000}"
     local current_uid
     local current_gid
     local existing_user

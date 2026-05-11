@@ -30,8 +30,8 @@ services:
       HEALTH_CHECK_PORT: ${HEALTH_CHECK_PORT:-8000}
       CHECK_INTERVAL: ${CHECK_INTERVAL:-300}
       FAIL_THRESHOLD: ${FAIL_THRESHOLD:-3}
-      BARMAN_UID: ${BARMAN_UID:-999}
-      BARMAN_GID: ${BARMAN_GID:-999}
+      BARMAN_UID: ${BARMAN_UID:-1000}
+      BARMAN_GID: ${BARMAN_GID:-1000}
       BARMAN_FIX_OWNERSHIP: ${BARMAN_FIX_OWNERSHIP:-true}
     volumes:
       - ${BARMAN_VOLUME:-barman-data}:/var/lib/barman
@@ -48,14 +48,15 @@ services:
     depends_on:
       - tailscale
     environment:
-      BARMAN_UID: ${BARMAN_UID:-999}
-      BARMAN_GID: ${BARMAN_GID:-999}
+      BARMAN_UID: ${BARMAN_UID:-1000}
+      BARMAN_GID: ${BARMAN_GID:-1000}
       BARMAN_FIX_OWNERSHIP: ${BARMAN_FIX_OWNERSHIP:-true}
     volumes:
       - ${BARMAN_VOLUME:-barman-data}:/var/lib/barman
       - barman-recover:/recover
       - ./config:/etc/barman.d
-    entrypoint: ["/usr/local/bin/docker-entrypoint.sh", "/usr/local/bin/setup-pgpass.sh"]
+    entrypoint:
+      ["/usr/local/bin/docker-entrypoint.sh", "/usr/local/bin/setup-pgpass.sh"]
     command: ["barman", "--help"]
 
   # Barman 本地恢复出的文件属于 barman 用户，启动 Postgres 前先修复成 postgres 权限

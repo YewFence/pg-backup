@@ -4,8 +4,8 @@ FROM debian:bookworm-slim
 ARG BARMAN_VERSION=3.18.0-2.pgdg12+2
 # renovate: datasource=deb depName=postgresql-client-17 suite=bookworm-pgdg
 ARG POSTGRESQL_CLIENT_VERSION=17.9-1.pgdg12+1
-ARG BARMAN_UID=999
-ARG BARMAN_GID=999
+ARG BARMAN_UID=1000
+ARG BARMAN_GID=1000
 
 RUN apt-get update && \
     apt-get install -y \
