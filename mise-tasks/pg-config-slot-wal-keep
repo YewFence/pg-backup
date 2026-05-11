@@ -3,78 +3,45 @@
 #USAGE arg "[size]" help="复制槽 WAL 保留上限，例如 512MB、5GB、20GB、-1"
 #USAGE flag "--apply" help="写入配置文件"
 #USAGE flag "--no-reload" help="写入后不自动重载 PostgreSQL 配置"
-#USAGE flag "--dir <dir>" help="pg-install 生成的实例目录" env="PG_INSTANCE_DIR"
+#USAGE flag "--dir <dir>" help="pg-prod 实例目录" env="PG_INSTANCE_DIR"
 set -euo pipefail
 
-COMMON="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/pg-local-config-common.sh"
-# shellcheck source=mise-tasks/lib/pg-local-config-common.sh
-source "$COMMON"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT="$ROOT_DIR/pg-prod/scripts/pg-config-slot-wal-keep"
+DEFAULT_INSTANCE_DIR="$ROOT_DIR/../pg"
+args=()
+passthrough=()
+using_mise_usage="false"
+has_passthrough_dir="false"
 
-ROOT_DIR="$(repo_root_from_task)"
-DEFAULT_SIZE="5GB"
-INSTANCE_DIR="${usage_dir:-${PG_INSTANCE_DIR:-$(default_pg_instance_dir "$ROOT_DIR")}}"
-apply="${usage_apply:-false}"
-reload="true"
-input="${usage_size:-}"
+if [ -n "${usage_size+x}" ] || [ -n "${usage_apply+x}" ] || [ -n "${usage_no_reload+x}" ] || [ -n "${usage_dir+x}" ]; then
+    using_mise_usage="true"
+fi
 
+if [ "$using_mise_usage" = "false" ]; then
+    passthrough=("$@")
+    for arg in "$@"; do
+        if [ "$arg" = "--dir" ]; then
+            has_passthrough_dir="true"
+        fi
+    done
+fi
+
+if [ -n "${usage_size:-}" ]; then
+    args+=("${usage_size}")
+fi
+if [ "${usage_apply:-false}" = "true" ]; then
+    args+=(--apply)
+fi
 if [ "${usage_no_reload:-false}" = "true" ]; then
-    reload="false"
+    args+=(--no-reload)
+fi
+if [ -n "${usage_dir:-}" ]; then
+    args+=(--dir "${usage_dir}")
+elif [ -n "${PG_INSTANCE_DIR:-}" ]; then
+    args+=(--dir "${PG_INSTANCE_DIR}")
+elif [ "$has_passthrough_dir" = "false" ]; then
+    args+=(--dir "$DEFAULT_INSTANCE_DIR")
 fi
 
-INSTANCE_DIR="$(absolute_existing_dir "$INSTANCE_DIR")"
-require_pg_instance "$INSTANCE_DIR"
-ensure_conf_dir "$INSTANCE_DIR"
-
-CONF_DIR="$INSTANCE_DIR/conf.d"
-TARGET="$CONF_DIR/90-slot-wal-keep.conf"
-MAIN_CONF="$INSTANCE_DIR/postgresql.conf"
-
-current="$(setting_value_from_file "$TARGET" max_slot_wal_keep_size)"
-if [ -z "$current" ]; then
-    current="$(setting_value_from_file "$MAIN_CONF" max_slot_wal_keep_size)"
-fi
-if [ -z "$current" ]; then
-    current="$DEFAULT_SIZE"
-fi
-
-if [ -z "$input" ]; then
-    echo "=== PostgreSQL replication slot WAL 保留上限配置 ==="
-    echo ""
-    echo "目标实例目录 $INSTANCE_DIR"
-    echo "当前 max_slot_wal_keep_size = $current"
-    echo ""
-    echo "这个值会限制复制槽最多滞留多少 WAL，默认建议 $DEFAULT_SIZE。"
-    echo "留空使用 $DEFAULT_SIZE，输入 -1 表示不限制，不建议生产环境长期使用。"
-    echo ""
-    printf "请输入新的保留上限 [默认 %s] " "$DEFAULT_SIZE"
-    read -r input
-fi
-
-size="${input:-$DEFAULT_SIZE}"
-
-if [[ ! "$size" =~ ^-1$ && ! "$size" =~ ^[0-9]+([kKmMgGtT][bB])?$ ]]; then
-    echo "错误，无效大小 '$size'，示例 512MB、5GB、20GB、-1"
-    exit 1
-fi
-
-tmp="$(mktemp "$CONF_DIR/.90-slot-wal-keep.conf.tmp.XXXXXX")"
-trap 'rm -f "$tmp"' EXIT
-
-cat > "$tmp" <<EOF
-# 由 mise r pg-config-slot-wal-keep 生成
-# 本地覆盖复制槽 WAL 保留上限
-max_slot_wal_keep_size = $size
-EOF
-
-preview_file_change "$TARGET" "$tmp"
-confirm_or_exit "$apply"
-apply_conf_file "$TARGET" "$tmp" "90-slot-wal-keep.conf"
-trap - EXIT
-
-if [ "$reload" = "true" ]; then
-    reload_postgres_config "$INSTANCE_DIR" \
-        -c "SHOW max_slot_wal_keep_size;" \
-        -c "SELECT name, setting, applied, error FROM pg_file_settings WHERE name = 'max_slot_wal_keep_size' ORDER BY sourcefile, sourceline;"
-else
-    echo "已跳过自动重载，配置会在 PostgreSQL 下次重载或重启后生效"
-fi
+exec "$SCRIPT" "${args[@]}" "${passthrough[@]}"

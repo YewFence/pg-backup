@@ -3,101 +3,45 @@
 #USAGE arg "[profile]" help="内存档位，可用 2GB、4GB、8GB、16GB，也可以用 1、2、3、4"
 #USAGE flag "--apply" help="写入配置文件"
 #USAGE flag "--no-reload" help="写入后不自动重载 PostgreSQL 配置"
-#USAGE flag "--dir <dir>" help="pg-install 生成的实例目录" env="PG_INSTANCE_DIR"
+#USAGE flag "--dir <dir>" help="pg-prod 实例目录" env="PG_INSTANCE_DIR"
 set -euo pipefail
 
-COMMON="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/pg-local-config-common.sh"
-# shellcheck source=mise-tasks/lib/pg-local-config-common.sh
-source "$COMMON"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT="$ROOT_DIR/pg-prod/scripts/pg-tune"
+DEFAULT_INSTANCE_DIR="$ROOT_DIR/../pg"
+args=()
+passthrough=()
+using_mise_usage="false"
+has_passthrough_dir="false"
 
-ROOT_DIR="$(repo_root_from_task)"
-INSTANCE_DIR="${usage_dir:-${PG_INSTANCE_DIR:-$(default_pg_instance_dir "$ROOT_DIR")}}"
-apply="${usage_apply:-false}"
-reload="true"
-choice="${usage_profile:-}"
+if [ -n "${usage_profile+x}" ] || [ -n "${usage_apply+x}" ] || [ -n "${usage_no_reload+x}" ] || [ -n "${usage_dir+x}" ]; then
+    using_mise_usage="true"
+fi
 
+if [ "$using_mise_usage" = "false" ]; then
+    passthrough=("$@")
+    for arg in "$@"; do
+        if [ "$arg" = "--dir" ]; then
+            has_passthrough_dir="true"
+        fi
+    done
+fi
+
+if [ -n "${usage_profile:-}" ]; then
+    args+=("${usage_profile}")
+fi
+if [ "${usage_apply:-false}" = "true" ]; then
+    args+=(--apply)
+fi
 if [ "${usage_no_reload:-false}" = "true" ]; then
-    reload="false"
+    args+=(--no-reload)
+fi
+if [ -n "${usage_dir:-}" ]; then
+    args+=(--dir "${usage_dir}")
+elif [ -n "${PG_INSTANCE_DIR:-}" ]; then
+    args+=(--dir "${PG_INSTANCE_DIR}")
+elif [ "$has_passthrough_dir" = "false" ]; then
+    args+=(--dir "$DEFAULT_INSTANCE_DIR")
 fi
 
-INSTANCE_DIR="$(absolute_existing_dir "$INSTANCE_DIR")"
-require_pg_instance "$INSTANCE_DIR"
-ensure_conf_dir "$INSTANCE_DIR"
-
-if [ -z "$choice" ]; then
-    echo "选择服务器内存大小"
-    echo "  1) 2 GB"
-    echo "  2) 4 GB"
-    echo "  3) 8 GB"
-    echo "  4) 16 GB"
-    printf "请输入 [1-4] "
-    read -r choice
-fi
-
-case "$choice" in
-    1|2GB|2gb)
-        shared_buffers="512MB"
-        effective_cache_size="1536MB"
-        work_mem="5MB"
-        maintenance_work_mem="128MB"
-        max_wal_size="512MB"
-        label="2GB"
-        ;;
-    2|4GB|4gb)
-        shared_buffers="1GB"
-        effective_cache_size="3GB"
-        work_mem="10MB"
-        maintenance_work_mem="256MB"
-        max_wal_size="1GB"
-        label="4GB"
-        ;;
-    3|8GB|8gb)
-        shared_buffers="2GB"
-        effective_cache_size="6GB"
-        work_mem="20MB"
-        maintenance_work_mem="512MB"
-        max_wal_size="2GB"
-        label="8GB"
-        ;;
-    4|16GB|16gb)
-        shared_buffers="4GB"
-        effective_cache_size="12GB"
-        work_mem="40MB"
-        maintenance_work_mem="1GB"
-        max_wal_size="4GB"
-        label="16GB"
-        ;;
-    *)
-        echo "错误，无效选择"
-        exit 1
-        ;;
-esac
-
-CONF_DIR="$INSTANCE_DIR/conf.d"
-TARGET="$CONF_DIR/80-memory.conf"
-tmp="$(mktemp "$CONF_DIR/.80-memory.conf.tmp.XXXXXX")"
-trap 'rm -f "$tmp"' EXIT
-
-cat > "$tmp" <<EOF
-# 由 mise r pg-tune 生成
-# 本地覆盖 PostgreSQL ${label} 内存档位
-shared_buffers = $shared_buffers
-effective_cache_size = $effective_cache_size
-work_mem = $work_mem
-maintenance_work_mem = $maintenance_work_mem
-max_wal_size = $max_wal_size
-EOF
-
-preview_file_change "$TARGET" "$tmp"
-confirm_or_exit "$apply"
-apply_conf_file "$TARGET" "$tmp" "80-memory.conf"
-trap - EXIT
-
-if [ "$reload" = "true" ]; then
-    reload_postgres_config "$INSTANCE_DIR" \
-        -c "SELECT name, setting, pending_restart FROM pg_settings WHERE name IN ('shared_buffers', 'effective_cache_size', 'work_mem', 'maintenance_work_mem', 'max_wal_size') ORDER BY name;" \
-        -c "SELECT name, setting, applied, error FROM pg_file_settings WHERE sourcefile LIKE '%80-memory.conf%' ORDER BY sourceline;"
-    echo "如果 shared_buffers 显示 pending_restart，需要执行 docker compose restart postgres"
-else
-    echo "已跳过自动重载，shared_buffers 需要重启 PostgreSQL 才能生效"
-fi
+exec "$SCRIPT" "${args[@]}" "${passthrough[@]}"

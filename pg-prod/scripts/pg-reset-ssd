@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+COMMON="$SCRIPT_DIR/lib/local-config-common.sh"
+# shellcheck source=pg-prod/scripts/lib/local-config-common.sh
+source "$COMMON"
+
+INSTANCE_DIR="$(default_instance_dir_from_script "$SCRIPT_DIR")"
+apply="false"
+reload="true"
+
+usage() {
+    echo "用法，scripts/pg-reset-ssd [--apply] [--no-reload] [--dir <dir>]"
+    print_common_usage
+}
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --apply)
+            apply="true"
+            shift
+            ;;
+        --no-reload)
+            reload="false"
+            shift
+            ;;
+        --dir)
+            if [ "${2:-}" = "" ]; then
+                echo "错误，--dir 需要目录参数"
+                exit 1
+            fi
+            INSTANCE_DIR="$2"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "错误，未知参数 $1"
+            usage
+            exit 1
+            ;;
+    esac
+done
+
+INSTANCE_DIR="$(absolute_existing_dir "$INSTANCE_DIR")"
+require_pg_prod_dir "$INSTANCE_DIR"
+ensure_conf_dir "$INSTANCE_DIR"
+
+CONF_DIR="$INSTANCE_DIR/conf.d"
+TARGET="$CONF_DIR/70-storage.conf"
+tmp="$(mktemp "$CONF_DIR/.70-storage.conf.tmp.XXXXXX")"
+trap 'rm -f "$tmp"' EXIT
+
+cat > "$tmp" <<'EOF'
+# 由 pg-prod/scripts/pg-reset-ssd 生成
+# 本地覆盖 HDD 场景的存储参数
+random_page_cost = 4
+effective_io_concurrency = 1
+EOF
+
+preview_file_change "$TARGET" "$tmp"
+confirm_or_exit "$apply"
+apply_conf_file "$TARGET" "$tmp" "70-storage.conf"
+trap - EXIT
+
+if [ "$reload" = "true" ]; then
+    reload_postgres_config "$INSTANCE_DIR" \
+        -c "SELECT name, setting FROM pg_settings WHERE name IN ('random_page_cost', 'effective_io_concurrency') ORDER BY name;" \
+        -c "SELECT name, setting, applied, error FROM pg_file_settings WHERE sourcefile LIKE '%70-storage.conf%' ORDER BY sourceline;"
+else
+    echo "已跳过自动重载，配置会在 PostgreSQL 下次重载或重启后生效"
+fi
