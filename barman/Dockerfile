@@ -4,12 +4,16 @@ FROM debian:bookworm-slim
 ARG BARMAN_VERSION=3.18.0-2.pgdg12+2
 # renovate: datasource=deb depName=postgresql-client-17 suite=bookworm-pgdg
 ARG POSTGRESQL_CLIENT_VERSION=17.9-1.pgdg12+1
+ARG BARMAN_UID=999
+ARG BARMAN_GID=999
 
 RUN apt-get update && \
     apt-get install -y \
     curl \
+    gosu \
     gnupg \
     lsb-release \
+    passwd \
     && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /usr/share/keyrings/postgresql-keyring.gpg \
     && echo "deb [signed-by=/usr/share/keyrings/postgresql-keyring.gpg] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
     && apt-get update && \
@@ -25,18 +29,25 @@ RUN curl -fsSL "https://github.com/aptible/supercronic/releases/download/${SUPER
     -o /usr/local/bin/supercronic \
     && chmod +x /usr/local/bin/supercronic
 
-# 保持 Debian 包创建的 barman 用户不变，只修正运行时需要写入的目录权限
-RUN mkdir -p /var/lib/barman /recover /var/log/barman && \
+# Keep the Debian package user, but make its numeric identity explicit.
+RUN groupmod --gid "${BARMAN_GID}" barman && \
+    usermod --uid "${BARMAN_UID}" --gid "${BARMAN_GID}" --home /var/lib/barman barman && \
+    mkdir -p /var/lib/barman /recover /var/log/barman && \
     touch /var/log/barman/barman.log && \
     chown -R barman:barman /var/lib/barman /recover /var/log/barman
 
+ENV BARMAN_UID=${BARMAN_UID} \
+    BARMAN_GID=${BARMAN_GID} \
+    BARMAN_FIX_OWNERSHIP=true
+
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 COPY setup-pgpass.sh /usr/local/bin/setup-pgpass.sh
 COPY barman-for-each-server.sh /usr/local/bin/barman-for-each-server
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY health-check.py /usr/local/bin/health-check.py
-RUN chmod +x /usr/local/bin/setup-pgpass.sh /usr/local/bin/barman-for-each-server /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/setup-pgpass.sh /usr/local/bin/barman-for-each-server /usr/local/bin/entrypoint.sh
 
-USER barman
 WORKDIR /var/lib/barman
 
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["/usr/local/bin/entrypoint.sh"]
