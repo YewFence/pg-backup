@@ -30,9 +30,6 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      PG_HOST: postgres
-      BARMAN_PASSWORD: barman
-      STREAMING_BARMAN_PASSWORD: streaming_barman
       HEALTH_CHECK_PORT: 8000
       CHECK_INTERVAL: 30
       FAIL_THRESHOLD: 1

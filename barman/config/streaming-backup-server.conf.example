@@ -2,6 +2,7 @@
 description = "Postgres server using streaming replication"
 streaming_archiver = on
 backup_method = postgres
+# 按需更改 host 字段
 streaming_conninfo = host=postgres user=streaming_barman dbname=postgres
 slot_name = barman
 create_slot = auto

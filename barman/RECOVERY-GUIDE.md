@@ -22,7 +22,7 @@ Barman 官方文档推荐用 `barman restore SERVER_NAME BACKUP_ID DESTINATION_P
 
 ### PG host 必须是 Tailscale 可达入口
 
-`barman` 服务使用 `network_mode: "service:tailscale"` 共享 Tailscale sidecar 的网络命名空间，所以不能假设 Docker Compose 里的 `postgres` 服务名一定能解析。`barman/.env` 里的 `PG_HOST`、`barman/config/streaming-backup-server.conf` 里的 `conninfo` 和 `streaming_conninfo`，都应该写成 PG 宿主机在 Tailscale 里的真实设备名、MagicDNS 名称或 Tailscale IP，例如 `fedora` 或 `100.x.y.z`。
+`barman` 服务使用 `network_mode: "service:tailscale"` 共享 Tailscale sidecar 的网络命名空间，所以不能假设 Docker Compose 里的 `postgres` 服务名一定能解析。`barman/config/streaming-backup-server.conf` 里的 `conninfo` 和 `streaming_conninfo`，都应该写成 PG 宿主机在 Tailscale 里的真实设备名、MagicDNS 名称或 Tailscale IP，例如 `fedora` 或 `100.x.y.z`。
 
 PG 容器需要把 `5432` 暴露到 PG 宿主机，或者让 PostgreSQL 本身直接运行在 Tailscale 可达的网络上。可以先从 Barman 容器里验证连接。
 
