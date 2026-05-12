@@ -1,8 +1,23 @@
 services:
+  archive-init:
+    image: postgres:18
+    user: root
+    network_mode: none
+    command:
+      - bash
+      - -lc
+      - mkdir -p /archive && chown -R postgres:postgres /archive && chmod 700 /archive
+    volumes:
+      - wal-archive:/archive
+    restart: "no"
+
   postgres:
-    build: .
+    image: postgres:18
     container_name: postgres
     restart: unless-stopped
+    depends_on:
+      archive-init:
+        condition: service_completed_successfully
     env_file: .env
     environment:
       POSTGRES_USER: postgres
