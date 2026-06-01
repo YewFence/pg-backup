@@ -45,4 +45,6 @@ jobs:
           install: false
 
       - name: Run smoke
+        env:
+          MISE_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: mise run barman-smoke

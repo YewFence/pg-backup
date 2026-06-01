@@ -1,3 +1,32 @@
+# syntax=docker/dockerfile:1.7
+
+FROM debian:bookworm-slim AS supercronic
+
+RUN apt-get update && \
+    apt-get install -y \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL https://mise.run -o /tmp/install-mise.sh \
+    && MISE_INSTALL_PATH=/usr/local/bin/mise sh /tmp/install-mise.sh \
+    && rm -f /tmp/install-mise.sh
+
+# renovate: datasource=github-releases depName=aptible/supercronic versioning=semver
+ARG SUPERCRONIC_VERSION=v0.2.45
+RUN --mount=type=secret,id=mise_github_token,required=false \
+    MISE_DATA_DIR=/tmp/mise-data \
+    MISE_CACHE_DIR=/tmp/mise-cache \
+    MISE_INSTALL_ROOT=/tmp/supercronic \
+    sh -euxc '\
+      if [ -f /run/secrets/mise_github_token ]; then \
+        export MISE_GITHUB_TOKEN="$(cat /run/secrets/mise_github_token)"; \
+      fi; \
+      mkdir -p "$MISE_INSTALL_ROOT"; \
+      mise install-into "github:aptible/supercronic@${SUPERCRONIC_VERSION}" "$MISE_INSTALL_ROOT"; \
+      install -m 0755 "$MISE_INSTALL_ROOT/supercronic" /usr/local/bin/supercronic; \
+    '
+
 FROM debian:bookworm-slim
 
 # renovate: datasource=deb depName=barman suite=bookworm-pgdg
@@ -9,6 +38,7 @@ ARG BARMAN_GID=1000
 
 RUN apt-get update && \
     apt-get install -y \
+    ca-certificates \
     curl \
     gosu \
     gnupg \
@@ -24,11 +54,7 @@ RUN apt-get update && \
     postgresql-client-17=${POSTGRESQL_CLIENT_VERSION} \
     && rm -rf /var/lib/apt/lists/*
 
-# renovate: datasource=github-releases depName=aptible/supercronic versioning=semver
-ARG SUPERCRONIC_VERSION=v0.2.45
-RUN curl -fsSL "https://github.com/aptible/supercronic/releases/download/${SUPERCRONIC_VERSION}/supercronic-linux-amd64" \
-    -o /usr/local/bin/supercronic \
-    && chmod +x /usr/local/bin/supercronic
+COPY --from=supercronic /usr/local/bin/supercronic /usr/local/bin/supercronic
 
 # Keep the Debian package user, but make its numeric identity explicit.
 RUN groupmod --gid "${BARMAN_GID}" barman && \

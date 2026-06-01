@@ -25,6 +25,8 @@ services:
   barman:
     build:
       context: ../barman
+      secrets:
+        - mise_github_token
     init: true
     depends_on:
       postgres:
@@ -43,3 +45,7 @@ services:
 volumes:
   barman-data:
   wal-archive:
+
+secrets:
+  mise_github_token:
+    environment: MISE_GITHUB_TOKEN
