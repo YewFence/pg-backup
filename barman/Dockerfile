@@ -20,6 +20,7 @@ RUN apt-get update && \
     apt-get install -y \
     barman=${BARMAN_VERSION} \
     barman-cli=${BARMAN_VERSION} \
+    python3-barman=${BARMAN_VERSION} \
     postgresql-client-17=${POSTGRESQL_CLIENT_VERSION} \
     && rm -rf /var/lib/apt/lists/*
 
@@ -38,7 +39,9 @@ RUN groupmod --gid "${BARMAN_GID}" barman && \
 
 ENV BARMAN_UID=${BARMAN_UID} \
     BARMAN_GID=${BARMAN_GID} \
-    BARMAN_FIX_OWNERSHIP=true
+    BARMAN_FIX_OWNERSHIP=true \
+    HOME=/var/lib/barman \
+    PGPASSFILE=/var/lib/barman/.pgpass
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 COPY setup-pgpass.sh /usr/local/bin/setup-pgpass.sh

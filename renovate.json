@@ -104,11 +104,18 @@
       "platformAutomerge": false
     },
     {
-      "description": "Disable Docker Compose updates",
+      "description": "Require review for PostgreSQL major upgrades",
       "matchManagers": [
+        "dockerfile",
         "docker-compose"
       ],
-      "enabled": false
+      "matchPackageNames": [
+        "postgres"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "automerge": false
     }
   ]
 }
