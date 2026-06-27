@@ -61,7 +61,7 @@ services:
 
   # Barman 本地恢复出的文件属于 barman 用户，启动 Postgres 前先修复成 postgres 权限
   fix-recover-permissions:
-    image: postgres:17
+    image: postgres:18
     container_name: barman-fix-recover-permissions
     profiles: ["recovery"]
     user: root
@@ -81,7 +81,7 @@ services:
 
   # 恢复验证用 PG，平时不启动
   pg-recovered:
-    image: postgres:17
+    image: postgres:18
     container_name: pg-recovered
     profiles: ["recovery"]
     init: true
