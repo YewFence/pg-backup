@@ -30,9 +30,9 @@ RUN --mount=type=secret,id=mise_github_token,required=false \
 FROM debian:bookworm-slim
 
 # renovate: datasource=deb depName=barman suite=bookworm-pgdg
-ARG BARMAN_VERSION=3.18.0-2.pgdg12+2
+ARG BARMAN_VERSION=3.19.1-2.pgdg12+1
 # renovate: datasource=deb depName=postgresql-client-17 suite=bookworm-pgdg
-ARG POSTGRESQL_CLIENT_VERSION=17.9-1.pgdg12+1
+ARG POSTGRESQL_CLIENT_VERSION=17.10-1.pgdg12+1
 ARG BARMAN_UID=1000
 ARG BARMAN_GID=1000
 
