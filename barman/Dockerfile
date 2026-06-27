@@ -13,7 +13,7 @@ RUN curl -fsSL https://mise.run -o /tmp/install-mise.sh \
     && rm -f /tmp/install-mise.sh
 
 # renovate: datasource=github-releases depName=aptible/supercronic versioning=semver
-ARG SUPERCRONIC_VERSION=v0.2.45
+ARG SUPERCRONIC_VERSION=v0.2.46
 RUN --mount=type=secret,id=mise_github_token,required=false \
     MISE_DATA_DIR=/tmp/mise-data \
     MISE_CACHE_DIR=/tmp/mise-cache \
