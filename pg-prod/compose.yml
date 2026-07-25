@@ -1,6 +1,6 @@
 services:
   archive-init:
-    image: postgres:17
+    image: postgres:18
     user: root
     network_mode: none
     command:
@@ -12,7 +12,7 @@ services:
     restart: "no"
 
   postgres:
-    image: postgres:17
+    image: postgres:18
     container_name: postgres
     restart: unless-stopped
     depends_on:
