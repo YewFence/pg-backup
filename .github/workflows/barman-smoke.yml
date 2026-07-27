@@ -3,7 +3,7 @@ name: Barman Smoke
 on:
   pull_request:
     branches:
-      - image
+      - main
     paths:
       - ".github/workflows/*.yml"
       - "barman/**"
@@ -13,7 +13,7 @@ on:
       - "renovate.json"
   push:
     branches:
-      - image
+      - main
     paths:
       - ".github/workflows/*.yml"
       - "barman/**"

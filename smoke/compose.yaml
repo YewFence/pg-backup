@@ -46,6 +46,12 @@ volumes:
   barman-data:
   wal-archive:
 
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.16.255.0/24
+
 secrets:
   mise_github_token:
     environment: MISE_GITHUB_TOKEN

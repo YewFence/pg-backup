@@ -4,8 +4,7 @@
     "config:recommended"
   ],
   "baseBranchPatterns": [
-    "main",
-    "image"
+    "main"
   ],
   "customManagers": [
     {
@@ -31,26 +30,6 @@
     }
   ],
   "packageRules": [
-    {
-      "description": "Disable Barman Dockerfile updates on main",
-      "matchBaseBranches": [
-        "main"
-      ],
-      "matchFileNames": [
-        "barman/Dockerfile"
-      ],
-      "enabled": false
-    },
-    {
-      "description": "Disable GitHub Actions updates on image",
-      "matchBaseBranches": [
-        "image"
-      ],
-      "matchManagers": [
-        "github-actions"
-      ],
-      "enabled": false
-    },
     {
       "description": "Group Barman image apt locks",
       "matchManagers": [
