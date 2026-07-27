@@ -1,0 +1,2 @@
+postgres:5432:postgres:barman:change-to-barman-password
+postgres:5432:*:streaming_barman:change-to-streaming-password

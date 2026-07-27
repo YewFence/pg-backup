@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+#MISE description="初始化并复制 Barman Edge 模板"
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SOURCE_DIR="$ROOT_DIR/barman-edge"
+TARGET_DIR="${BARMAN_EDGE_INSTALL_TARGET_DIR:-$ROOT_DIR/../barman-edge}"
+
+if [ -e "$TARGET_DIR" ]; then
+    echo "错误：目标路径 $TARGET_DIR 已存在。" >&2
+    exit 1
+fi
+
+read -r -p "Barman server 名称 [postgres-edge]: " SERVER_NAME
+SERVER_NAME="${SERVER_NAME:-postgres-edge}"
+if [[ ! "$SERVER_NAME" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+    echo "错误：server 名称只能包含字母、数字、点、下划线和连字符。" >&2
+    exit 1
+fi
+
+read -r -p "PostgreSQL Docker DNS 名称 [postgres]: " PG_HOST
+PG_HOST="${PG_HOST:-postgres}"
+read -r -p "S3 URL（例如 s3://bucket/postgres-backups）: " S3_URL
+read -r -p "S3 兼容端点（AWS S3 留空）: " AWS_ENDPOINT_URL
+read -r -p "AWS Region [us-east-1]: " AWS_DEFAULT_REGION
+AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-us-east-1}"
+read -r -p "AWS Access Key ID: " AWS_ACCESS_KEY_ID
+read -rs -p "AWS Secret Access Key: " AWS_SECRET_ACCESS_KEY
+echo
+read -rs -p "PostgreSQL barman 用户密码: " BARMAN_PASSWORD
+echo
+read -rs -p "PostgreSQL streaming_barman 用户密码: " STREAMING_BARMAN_PASSWORD
+echo
+
+for name in S3_URL AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY BARMAN_PASSWORD STREAMING_BARMAN_PASSWORD; do
+    if [ -z "${!name}" ]; then
+        echo "错误：$name 不能为空。" >&2
+        exit 1
+    fi
+done
+
+mkdir -p "$TARGET_DIR"
+cp -a "$SOURCE_DIR/." "$TARGET_DIR/"
+install -m 600 "$SOURCE_DIR/.env.example" "$TARGET_DIR/.env"
+
+set_env_value() {
+    local key="$1"
+    local value="$2"
+    local file="$TARGET_DIR/.env"
+    local tmp
+    tmp="$(mktemp "$file.XXXXXX")"
+    awk -v key="$key" -v value="$value" '
+        $0 ~ "^" key "=" { print key "=" value; found = 1; next }
+        { print }
+        END { if (!found) print key "=" value }
+    ' "$file" > "$tmp"
+    mv "$tmp" "$file"
+    chmod 600 "$file"
+}
+
+set_env_value AWS_ACCESS_KEY_ID "$AWS_ACCESS_KEY_ID"
+set_env_value AWS_SECRET_ACCESS_KEY "$AWS_SECRET_ACCESS_KEY"
+set_env_value AWS_DEFAULT_REGION "$AWS_DEFAULT_REGION"
+set_env_value AWS_ENDPOINT_URL "$AWS_ENDPOINT_URL"
+
+awk -v server="$SERVER_NAME" -v host="$PG_HOST" -v url="$S3_URL" '
+    /^\[postgres-edge\]$/ { print "[" server "]"; next }
+    /^description =/ { print "description = \"Edge Barman for " server "\""; next }
+    /^conninfo =/ { print "conninfo = host=" host " user=barman dbname=postgres"; next }
+    /^streaming_conninfo =/ { print "streaming_conninfo = host=" host " user=streaming_barman dbname=postgres"; next }
+    /^basebackups_directory =/ { print "basebackups_directory = " url; next }
+    /^wals_directory =/ { print "wals_directory = " url; next }
+    /^backup_directory =/ { print "backup_directory = /var/lib/barman/" server; next }
+    /^xlogdb_directory =/ { print "xlogdb_directory = /var/lib/barman/" server "/xlogdb"; next }
+    { print }
+' "$SOURCE_DIR/config/postgres-edge.conf.example" > "$TARGET_DIR/config/$SERVER_NAME.conf"
+
+printf '%s\n' \
+    "$PG_HOST:5432:postgres:barman:$BARMAN_PASSWORD" \
+    "$PG_HOST:5432:*:streaming_barman:$STREAMING_BARMAN_PASSWORD" \
+    > "$TARGET_DIR/config/pgpass"
+chmod 600 "$TARGET_DIR/config/pgpass"
+cp "$SOURCE_DIR/config/barman.crontab.example" "$TARGET_DIR/config/barman.crontab"
+
+echo
+echo "Barman Edge 已复制到 $TARGET_DIR"
+echo "启动：cd \"$TARGET_DIR\" && docker compose up -d"

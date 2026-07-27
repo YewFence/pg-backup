@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
-"""Run the local Barman smoke test."""
+"""Run local smoke tests for edge and offsite Barman deployments."""
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 import time
-import re
 from collections.abc import Callable
 from pathlib import Path
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 COMPOSE_FILE = ROOT_DIR / "smoke" / "compose.yaml"
-SERVER_NAME = "streaming-backup-server"
+EDGE_SERVICE = "barman-edge"
+EDGE_SERVER = "postgres-edge"
+OFFSITE_SERVICE = "barman-offsite"
+OFFSITE_SERVER = "postgres-offsite"
 
 
 class SmokeError(RuntimeError):
@@ -44,7 +47,11 @@ def run(
     return proc
 
 
-def compose(*args: str, check: bool = True, capture: bool = False) -> subprocess.CompletedProcess[str]:
+def compose(
+    *args: str,
+    check: bool = True,
+    capture: bool = False,
+) -> subprocess.CompletedProcess[str]:
     return run(
         ["docker", "compose", "-f", str(COMPOSE_FILE), *args],
         check=check,
@@ -86,16 +93,13 @@ def cleanup() -> None:
 
 
 def wait_for_postgres_seed() -> None:
-    query = (
-        "SELECT count(*) FROM users "
-        "UNION ALL SELECT count(*) FROM products "
-        "UNION ALL SELECT count(*) FROM orders"
-    )
     retry(
         "PostgreSQL seed 数据",
         attempts=30,
         delay_seconds=2,
         action=lambda: compose_exec(
+            "postgres",
+            "gosu",
             "postgres",
             "psql",
             "-U",
@@ -103,20 +107,41 @@ def wait_for_postgres_seed() -> None:
             "-v",
             "ON_ERROR_STOP=1",
             "-c",
-            query,
+            "SELECT count(*) FROM users; SELECT count(*) FROM products;",
             check=False,
             capture=True,
         ),
     )
 
 
-def wait_for_barman_connection() -> None:
+def create_s3_bucket() -> None:
+    script = """
+import boto3
+client = boto3.client('s3', endpoint_url='http://rustfs:9000', region_name='us-east-1')
+client.create_bucket(Bucket='pg-backup-smoke')
+"""
     retry(
-        "Barman 到 PostgreSQL 的连接",
+        "RustFS",
         attempts=30,
         delay_seconds=2,
         action=lambda: compose_exec(
-            "barman",
+            EDGE_SERVICE,
+            "python3",
+            "-c",
+            script,
+            check=False,
+            capture=True,
+        ),
+    )
+
+
+def wait_for_barman_connection(service: str, label: str) -> None:
+    retry(
+        f"{label} 到 PostgreSQL 的连接",
+        attempts=30,
+        delay_seconds=2,
+        action=lambda: compose_exec(
+            service,
             "psql",
             "-U",
             "barman",
@@ -131,14 +156,14 @@ def wait_for_barman_connection() -> None:
     )
 
 
-def start_receive_wal() -> None:
+def start_receive_wal(service: str, server: str) -> None:
     def check_receive_wal() -> subprocess.CompletedProcess[str]:
-        compose_exec("barman", "barman", "cron", check=False)
+        compose_exec(service, "barman", "cron", check=False)
         proc = compose_exec(
-            "barman",
+            service,
             "barman",
             "check",
-            SERVER_NAME,
+            server,
             check=False,
             capture=True,
         )
@@ -146,44 +171,83 @@ def start_receive_wal() -> None:
             return subprocess.CompletedProcess(proc.args, 1, proc.stdout, proc.stderr)
         return proc
 
-    retry("Barman receive-wal", attempts=10, delay_seconds=5, action=check_receive_wal)
+    retry(f"{server} receive-wal", attempts=12, delay_seconds=5, action=check_receive_wal)
 
 
-def wait_for_barman_check() -> None:
-    def check_barman() -> subprocess.CompletedProcess[str]:
-        compose_exec("barman", "barman", "cron", check=False)
-        return compose_exec(
-            "barman",
+def wait_for_barman_check(service: str, server: str) -> None:
+    retry(
+        f"{server} check",
+        attempts=12,
+        delay_seconds=5,
+        action=lambda: compose_exec(
+            service,
             "barman",
             "check",
-            SERVER_NAME,
+            server,
             check=False,
             capture=True,
-        )
+        ),
+    )
 
-    retry("Barman check", attempts=10, delay_seconds=5, action=check_barman)
+
+def run_backup(service: str, server: str) -> None:
+    compose_exec(service, "barman", "switch-wal", "--force", server)
+    compose_exec(service, "barman", "cron")
+    compose_exec(service, "barman", "backup", server, "--wait")
+    compose_exec(service, "barman", "cron")
+    compose_exec(service, "barman", "list-backups", server)
+    wait_for_barman_check(service, server)
+    check_latest_backup(service, server)
 
 
-def check_latest_backup() -> None:
-    compose_exec("barman", "barman", "check-backup", SERVER_NAME, "latest")
+def check_latest_backup(service: str, server: str) -> None:
+    compose_exec(service, "barman", "check-backup", server, "latest")
     proc = compose_exec(
-        "barman",
+        service,
         "barman",
         "show-backup",
-        SERVER_NAME,
+        server,
         "latest",
         capture=True,
     )
     if not re.search(r"^\s*Status\s*:\s*DONE\s*$", proc.stdout or "", re.MULTILINE):
-        raise SmokeError("最新备份没有进入 DONE 状态")
+        raise SmokeError(f"{server} 最新备份没有进入 DONE 状态")
+
+
+def verify_edge_cloud_objects() -> None:
+    script = """
+import boto3
+client = boto3.client('s3', endpoint_url='http://rustfs:9000', region_name='us-east-1')
+keys = [item['Key'] for item in client.list_objects_v2(Bucket='pg-backup-smoke').get('Contents', [])]
+assert any(key.startswith('postgres-edge/base/') for key in keys), keys
+assert any(key.startswith('postgres-edge/wals/') for key in keys), keys
+print('\\n'.join(keys))
+"""
+    compose_exec(EDGE_SERVICE, "python3", "-c", script)
+
+
+def verify_edge_restore() -> None:
+    compose_exec(
+        EDGE_SERVICE,
+        "barman",
+        "restore",
+        EDGE_SERVER,
+        "latest",
+        "/var/lib/barman/cloud-restore",
+    )
+    compose_exec(
+        EDGE_SERVICE,
+        "test",
+        "-f",
+        "/var/lib/barman/cloud-restore/PG_VERSION",
+    )
 
 
 def show_failure_context() -> None:
     try:
-        print("=== postgres logs ===")
-        compose("logs", "postgres", check=False)
-        print("=== barman logs ===")
-        compose("logs", "barman", check=False)
+        for service in ("postgres", "rustfs", EDGE_SERVICE, OFFSITE_SERVICE):
+            print(f"=== {service} logs ===")
+            compose("logs", service, check=False)
     except OSError as exc:
         print(f"无法收集 smoke 日志: {exc}", file=sys.stderr)
 
@@ -192,38 +256,20 @@ def main() -> int:
     try:
         cleanup()
         compose("build")
-        compose("up", "-d", "postgres", "barman")
+        compose("up", "-d", "postgres", "rustfs", EDGE_SERVICE, OFFSITE_SERVICE)
 
         wait_for_postgres_seed()
-        compose_exec(
-            "postgres",
-            "psql",
-            "-U",
-            "postgres",
-            "-c",
-            "SELECT name, setting FROM pg_settings WHERE name IN ('wal_level', 'archive_mode')",
-        )
-        compose_exec(
-            "postgres",
-            "psql",
-            "-U",
-            "postgres",
-            "-c",
-            (
-                "SELECT 'users' AS tbl, count(*) FROM users "
-                "UNION ALL SELECT 'products', count(*) FROM products "
-                "UNION ALL SELECT 'orders', count(*) FROM orders"
-            ),
-        )
+        create_s3_bucket()
+        wait_for_barman_connection(EDGE_SERVICE, "Barman Edge")
+        wait_for_barman_connection(OFFSITE_SERVICE, "Barman Offsite")
+        start_receive_wal(EDGE_SERVICE, EDGE_SERVER)
+        start_receive_wal(OFFSITE_SERVICE, OFFSITE_SERVER)
 
-        wait_for_barman_connection()
-        start_receive_wal()
-        compose_exec("barman", "barman", "backup", SERVER_NAME, "--wait")
-        compose_exec("barman", "barman", "switch-wal", "--force", SERVER_NAME)
-        compose_exec("barman", "barman", "cron")
-        compose_exec("barman", "barman", "list-backups", SERVER_NAME)
-        wait_for_barman_check()
-        check_latest_backup()
+        run_backup(EDGE_SERVICE, EDGE_SERVER)
+        verify_edge_cloud_objects()
+        verify_edge_restore()
+
+        run_backup(OFFSITE_SERVICE, OFFSITE_SERVER)
         return 0
     except (SmokeError, subprocess.SubprocessError, OSError) as exc:
         print(f"smoke 测试失败: {exc}", file=sys.stderr)

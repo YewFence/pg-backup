@@ -1,0 +1,11 @@
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin
+
+# 接收并归档 WAL、执行保留策略维护。
+* * * * * barman -q cron
+
+# 每台边缘节点在每天 02:07 将基础备份直接写入 S3。
+7 2 * * * barman-for-each-server backup --wait
+
+# 每周验证最新备份。
+17 3 * * 0 barman-for-each-server verify-backup latest

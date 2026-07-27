@@ -1,11 +1,9 @@
 #!/bin/bash
 set -e
 
-# 配置 pgpass
-/usr/local/bin/setup-pgpass.sh
+gosu barman /usr/local/bin/setup-pgpass.sh
 
-# 启动 health check HTTP server（后台运行）
-python3 /usr/local/bin/health-check.py &
+gosu barman python3 /usr/local/bin/health-check.py &
 
 # 检查 crontab 文件
 CRONTAB_FILE="/etc/barman.d/barman.crontab"
@@ -16,10 +14,27 @@ if [ ! -f "$CRONTAB_FILE" ]; then
     exit 0
 fi
 
-echo "Starting supercronic with crontab: $CRONTAB_FILE"
+CRON_ENV_FILE="/var/lib/barman/cron.env"
+CRONTAB_RUNTIME="/var/lib/barman/barman.crontab"
+
+umask 077
+while IFS='=' read -r name value; do
+    case "$name" in
+        AWS_*) printf 'export %s=%q\n' "$name" "$value" ;;
+    esac
+done < <(env) > "$CRON_ENV_FILE"
+chown barman:barman "$CRON_ENV_FILE"
+
+{
+    printf 'BASH_ENV=%s\n' "$CRON_ENV_FILE"
+    cat "$CRONTAB_FILE"
+} > "$CRONTAB_RUNTIME"
+chown barman:barman "$CRONTAB_RUNTIME"
+crontab -u barman "$CRONTAB_RUNTIME"
+
+echo "Starting cron with crontab: $CRONTAB_FILE"
 echo "Loaded cron jobs:"
 cat "$CRONTAB_FILE"
 echo "---"
 
-# 启动 supercronic（前台运行，不使用 exec）
-supercronic "$CRONTAB_FILE"
+exec cron -f

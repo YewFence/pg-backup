@@ -1,0 +1,46 @@
+name: postgres
+
+services:
+  postgres:
+    # PostgreSQL 主服务，通过流复制向独立 Barman 服务提供基础备份和 WAL。
+    image: postgres:17.10
+    container_name: ${POSTGRES_CONTAINER_NAME:-postgres}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      BARMAN_PASSWORD: ${BARMAN_PASSWORD:?BARMAN_PASSWORD must be set}
+      STREAMING_BARMAN_PASSWORD: ${STREAMING_BARMAN_PASSWORD:?STREAMING_BARMAN_PASSWORD must be set}
+      POSTGRES_EXPORTER_PASSWORD: ${POSTGRES_EXPORTER_PASSWORD:?POSTGRES_EXPORTER_PASSWORD must be set}
+    ports:
+      - "${POSTGRES_BIND_ADDRESS:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -h 127.0.0.1 -U "$${POSTGRES_USER:-postgres}" -d "$${POSTGRES_DB:-postgres}"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    volumes:
+      # 数据目录使用命名卷，迁移时可以由备份系统恢复。
+      - postgres_data:/var/lib/postgresql/data
+      # 首次初始化时创建备份用户，并把访问控制和性能配置复制进 PGDATA。
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+      - ./sql:/usr/local/share/postgres/sql:ro
+      - ./pg_hba.conf:/config/pg_hba.conf:ro
+      - ./conf.d:/config/conf.d:ro
+      - ./scripts/create-db-user.sh:/usr/local/bin/create-db-user:ro
+      - ./scripts/repair-barman-users.sh:/usr/local/bin/repair-barman-users:ro
+    networks:
+      - pg-net
+
+volumes:
+  postgres_data:
+    name: ${POSTGRES_DATA_VOLUME_NAME:-postgres_data}
+
+networks:
+  pg-net:
+    name: ${POSTGRES_NETWORK_NAME:-pg-net}
+    driver: bridge

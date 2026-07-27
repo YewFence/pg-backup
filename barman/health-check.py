@@ -45,10 +45,12 @@ def discover_server_names():
         except OSError as exc:
             print(f"could not read {conf_file}: {exc}")
 
-    return names or ["streaming-backup-server"]
+    return names
 
 
 SERVER_NAMES = discover_server_names()
+if not SERVER_NAMES:
+    raise SystemExit(f"no Barman server configuration found in {CONFIG_DIR}")
 
 
 def check_server(server_name):

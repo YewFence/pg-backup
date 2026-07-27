@@ -1,0 +1,22 @@
+[postgres-edge]
+description = "Edge Barman streaming PostgreSQL backups directly to S3"
+
+conninfo = host=postgres user=barman dbname=postgres
+streaming_conninfo = host=postgres user=streaming_barman dbname=postgres
+backup_method = postgres
+streaming_archiver = on
+slot_name = barman_edge
+create_slot = auto
+
+# 基础备份和 WAL 使用同一个前缀，Barman 会在其下按 server 名组织对象。
+basebackups_directory = s3://your-bucket/postgres-backups
+wals_directory = s3://your-bucket/postgres-backups
+
+# 完整备份不会落本地，但元数据、WAL catalog、流式接收和上传缓冲仍需本地磁盘。
+backup_directory = /var/lib/barman/postgres-edge
+xlogdb_directory = /var/lib/barman/postgres-edge/xlogdb
+cloud_staging_directory = /var/lib/barman/cloud-staging
+cloud_staging_max_size = 10Gi
+
+minimum_redundancy = 1
+retention_policy = RECOVERY WINDOW OF 7 DAYS

@@ -7,9 +7,11 @@ on:
     paths:
       - ".github/workflows/*.yml"
       - "barman/**"
-      - "pg/**"
+      - "barman-edge/**"
+      - "barman-offsite/**"
+      - "postgres/**"
       - "smoke/**"
-      - "mise-tasks/barman-smoke"
+      - "mise-tasks/**"
       - "renovate.json"
   push:
     branches:
@@ -17,9 +19,11 @@ on:
     paths:
       - ".github/workflows/*.yml"
       - "barman/**"
-      - "pg/**"
+      - "barman-edge/**"
+      - "barman-offsite/**"
+      - "postgres/**"
       - "smoke/**"
-      - "mise-tasks/barman-smoke"
+      - "mise-tasks/**"
       - "renovate.json"
   workflow_dispatch:
 
@@ -45,6 +49,4 @@ jobs:
           install: false
 
       - name: Run smoke
-        env:
-          MISE_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: mise run barman-smoke

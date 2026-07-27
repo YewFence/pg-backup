@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+#MISE description="初始化并复制 Barman Offsite 模板"
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SOURCE_DIR="$ROOT_DIR/barman-offsite"
+TARGET_DIR="${BARMAN_OFFSITE_INSTALL_TARGET_DIR:-$ROOT_DIR/../barman-offsite}"
+
+if [ -e "$TARGET_DIR" ]; then
+    echo "错误：目标路径 $TARGET_DIR 已存在。" >&2
+    exit 1
+fi
+
+read -r -p "Barman server 名称 [postgres-offsite]: " SERVER_NAME
+SERVER_NAME="${SERVER_NAME:-postgres-offsite}"
+if [[ ! "$SERVER_NAME" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+    echo "错误：server 名称只能包含字母、数字、点、下划线和连字符。" >&2
+    exit 1
+fi
+
+read -r -p "PostgreSQL Tailscale IP 或 MagicDNS 名称: " PG_HOST
+read -rs -p "PostgreSQL barman 用户密码: " BARMAN_PASSWORD
+echo
+read -rs -p "PostgreSQL streaming_barman 用户密码: " STREAMING_BARMAN_PASSWORD
+echo
+
+for name in PG_HOST BARMAN_PASSWORD STREAMING_BARMAN_PASSWORD; do
+    if [ -z "${!name}" ]; then
+        echo "错误：$name 不能为空。" >&2
+        exit 1
+    fi
+done
+
+mkdir -p "$TARGET_DIR"
+cp -a "$SOURCE_DIR/." "$TARGET_DIR/"
+cp "$SOURCE_DIR/.env.example" "$TARGET_DIR/.env"
+chmod 600 "$TARGET_DIR/.env"
+
+awk -v server="$SERVER_NAME" -v host="$PG_HOST" '
+    /^\[postgres-offsite\]$/ { print "[" server "]"; next }
+    /^description =/ { print "description = \"Offsite Barman for " server "\""; next }
+    /^conninfo =/ { print "conninfo = host=" host " user=barman dbname=postgres"; next }
+    /^streaming_conninfo =/ { print "streaming_conninfo = host=" host " user=streaming_barman dbname=postgres"; next }
+    { print }
+' "$SOURCE_DIR/config/postgres-offsite.conf.example" > "$TARGET_DIR/config/$SERVER_NAME.conf"
+
+printf '%s\n' \
+    "$PG_HOST:5432:postgres:barman:$BARMAN_PASSWORD" \
+    "$PG_HOST:5432:*:streaming_barman:$STREAMING_BARMAN_PASSWORD" \
+    > "$TARGET_DIR/config/pgpass"
+chmod 600 "$TARGET_DIR/config/pgpass"
+cp "$SOURCE_DIR/config/barman.crontab.example" "$TARGET_DIR/config/barman.crontab"
+
+echo
+echo "Barman Offsite 已复制到 $TARGET_DIR"
+echo "启动：cd \"$TARGET_DIR\" && docker compose up -d"

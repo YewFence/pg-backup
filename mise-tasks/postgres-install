@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+#MISE description="初始化并复制 PostgreSQL 模板"
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SOURCE_DIR="$ROOT_DIR/postgres"
+TARGET_DIR="${POSTGRES_INSTALL_TARGET_DIR:-$ROOT_DIR/../postgres}"
+ENV_FILE="$TARGET_DIR/.env"
+
+if [ -e "$TARGET_DIR" ]; then
+    echo "错误：目标路径 $TARGET_DIR 已存在。" >&2
+    exit 1
+fi
+
+generate_password() {
+    openssl rand -base64 24
+}
+
+read_password() {
+    local prompt="$1"
+    local value
+    read -rs -p "$prompt（留空自动生成）: " value
+    echo >&2
+    if [ -z "$value" ]; then
+        value="$(generate_password)"
+    fi
+    printf '%s' "$value"
+}
+
+set_env_value() {
+    local key="$1"
+    local value="$2"
+    local tmp
+
+    tmp="$(mktemp "$ENV_FILE.XXXXXX")"
+    awk -v key="$key" -v value="$value" '
+        $0 ~ "^" key "=" { print key "=" value; found = 1; next }
+        { print }
+        END { if (!found) print key "=" value }
+    ' "$ENV_FILE" > "$tmp"
+    mv "$tmp" "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
+}
+
+echo "=== PostgreSQL 模板安装 ==="
+POSTGRES_PASSWORD="$(read_password "PostgreSQL 超级用户密码")"
+BARMAN_PASSWORD="$(read_password "Barman 协调用户密码")"
+STREAMING_BARMAN_PASSWORD="$(read_password "Barman 流复制用户密码")"
+POSTGRES_EXPORTER_PASSWORD="$(read_password "PostgreSQL 监控用户密码")"
+
+mkdir -p "$TARGET_DIR"
+cp -a \
+    "$SOURCE_DIR/compose.yaml" \
+    "$SOURCE_DIR/conf.d" \
+    "$SOURCE_DIR/initdb" \
+    "$SOURCE_DIR/pg_hba.conf" \
+    "$SOURCE_DIR/scripts" \
+    "$SOURCE_DIR/sql" \
+    "$SOURCE_DIR/.env.example" \
+    "$SOURCE_DIR/.gitignore" \
+    "$SOURCE_DIR/README.md" \
+    "$TARGET_DIR/"
+
+install -m 600 "$SOURCE_DIR/.env.example" "$ENV_FILE"
+set_env_value POSTGRES_PASSWORD "$POSTGRES_PASSWORD"
+set_env_value BARMAN_PASSWORD "$BARMAN_PASSWORD"
+set_env_value STREAMING_BARMAN_PASSWORD "$STREAMING_BARMAN_PASSWORD"
+set_env_value POSTGRES_EXPORTER_PASSWORD "$POSTGRES_EXPORTER_PASSWORD"
+
+echo
+echo "PostgreSQL 模板已复制到 $TARGET_DIR"
+echo "启动：cd \"$TARGET_DIR\" && docker compose up -d"
+echo
+echo "生成的密码保存在 $ENV_FILE，请将同一组 Barman 密码写入 edge/offsite 的 pgpass。"

@@ -1,312 +1,154 @@
-# pg-backup
+# PostgreSQL + Barman 备份模板
 
-这是一个 PostgreSQL / Barman 生产部署模版项目兼测试项目，用于测试 [Barman](https://pgbarman.org/) 对 PostgreSQL 数据库的备份与恢复功能，以及通过 Docker Compose 快速部署 PostgreSQL 与 Barman 实例。
-> 测试环境假设：`pg/` 与 `barman/` 部署在不同宿主机，两台宿主机均已安装并登录 Tailscale。Barman 容器直接连接 PostgreSQL 宿主机的 Tailscale IP，并使用 Barman 宿主机的 Tailscale 身份。
+这个仓库提供一套 PostgreSQL 17 双路径物理备份模板：边缘节点直接备份到 S3，异地节点通过 Tailscale 备份到本地磁盘。
 
-## 项目结构
+## 架构
 
-```
-.
-├── pg/                         # PostgreSQL 17 数据库（被备份的目标）
-│   ├── compose.yml
-│   ├── Dockerfile              # 预创建 /archive 并设置 WAL 归档权限
-│   ├── postgresql.conf
-│   ├── pg_hba.conf
-│   ├── initdb/
-│   ├── Dockerfile.cloud        # barman-cloud sidecar 镜像
-│   ├── cloud-crontab.example   # sidecar 定时任务模板
-│   └── scripts/                # sidecar 脚本
-│       ├── wal-push.sh         # WAL 推送到 S3
-│       ├── cloud-backup.sh     # 基础备份到 S3
-│       ├── cloud-backup-delete.sh  # 清理旧备份
-│       └── sidecar-entrypoint.sh   # sidecar 入口
-├── barman/                     # Barman 客户端（备份工具）
-│   ├── Dockerfile              # Barman 运行环境
-│   ├── compose.yml             # Barman 服务及本地恢复验证环境
-│   ├── setup-pgpass.sh         # 配置数据库密码
-│   ├── health-check.py         # 健康检查 HTTP 服务
-│   ├── entrypoint.sh           # 容器启动脚本
-│   ├── config/                 # 挂载到 /etc/barman.d
-│   │   ├── *.conf              # Barman server 配置，一个 PostgreSQL 一个 server 段
-│   │   ├── pgpass              # 各 PostgreSQL 的连接密码
-│   │   └── barman.crontab      # 定时任务配置
-│   ├── RECOVERY-GUIDE.md       # 详细恢复指南
-│   ├── E2E-TEST.md             # 端到端测试流程
-│   └── .env                    # Barman 部署参数（不提交）
-└── README.md
+```text
+边缘节点
+┌─────────────────────────────────────────────┐
+│ postgres                                    │
+│   ├── replication slot: barman_edge         │
+│   └── replication slot: barman_offsite      │
+│                                             │
+│ barman-edge                                 │
+│   pg_basebackup + pg_receivewal ───────> S3 │
+└─────────────────────────────────────────────┘
+                        ▲
+                        │ Tailscale
+                        │
+异地节点                │
+┌───────────────────────┴─────────────────────┐
+│ barman-offsite                              │
+│   pg_basebackup + pg_receivewal ──> 本地磁盘│
+└─────────────────────────────────────────────┘
 ```
 
-**重要说明**：
-- Barman 备份数据使用 `barman-data` 命名卷
-- 本地恢复中转数据使用 `barman-recover` 命名卷
-- 本地恢复后先运行 `fix-recover-permissions`，再启动 `pg-recovered`
-- PG 主数据和云恢复数据使用 Docker 命名卷，不再在仓库里生成 `pgdata` 和 `pgdata-recovery` 目录
+PostgreSQL 不负责上传、调度或清理备份。两套 Barman 都主动通过复制协议读取 PostgreSQL，并使用独立复制槽，避免共享消费进度。
 
-## 快速开始
+## 目录
 
-### 依赖
+```text
+postgres/         PostgreSQL 生产模板，只提供数据库和复制接口
+barman/           edge/offsite 共用的 Barman 容器镜像实现
+barman-edge/      与 PostgreSQL 同节点部署，备份直接写入 S3
+barman-offsite/   部署在异地主机，备份写入本地卷
+smoke/            同时验证 edge 和 offsite 的端到端测试
+mise-tasks/       三套模板的安装任务和 smoke 入口
+```
 
-- [mise](https://mise.jdx.dev)
-- [tailscale](https://tailscale.com)
-- docker compose
+## 为什么不再使用 WAL sidecar
 
-> PostgreSQL 与 Barman 宿主机都需要安装并登录 Tailscale，容器内不运行 Tailscale。
-> 
-> TailscaleACL 需要允许 Barman 宿主机访问 PostgreSQL 宿主机的 5432 端口
+旧模板的云备份路径需要 PostgreSQL `archive_command`、WAL 共享卷、定时扫描脚本和独立的 barman-cloud sidecar：
 
-### A 从模版安装并启动 PostgreSQL
+```text
+PostgreSQL -> 共享卷 -> 定时扫描 -> S3
+```
+
+Barman 3.19 支持 `backup_method = postgres` 配合云存储目录。新路径由 Barman 直接接收基础备份和 WAL：
+
+```text
+PostgreSQL -> Barman streaming -> S3
+```
+
+完整基础备份不会落到 edge 本地磁盘，只使用有限大小的 staging。Barman catalog、WAL 索引和流式接收临时文件仍保存在 `barman-edge` 本地卷。
+
+## 部署 PostgreSQL
+
+手动复制模板：
 
 ```bash
-mise r --raw pg-install
-# 需要输入密码，会持久到 .env 文件，也可以让脚本使用 openssl 自动生成
-# 可选，在当前模板仓库根目录生成实例本地覆盖配置
-mise r --raw pg-config-slot-wal-keep 5GB --apply --dir ../pg
-mise r --raw pg-tune 4GB --apply --dir ../pg
-cd ../pg && docker compose up -d
+cp -a postgres ../postgres-instance
+cd ../postgres-instance
+cp .env.example .env
+docker compose up -d
 ```
 
-### B 从模版安装并启动 Barman
-
-1. 安装并启动
-```bash
-mise r --raw barman-install
-# 按提示输入 PostgreSQL 宿主机的 Tailscale IP，以及 barman 和 streaming_barman 用户密码
-cd ../barman && docker compose up -d
-```
-
-Barman 配置中的 PostgreSQL host 应填写目标宿主机的 Tailscale IP。容器通过 Barman 宿主机访问 tailnet，请确认两台宿主机已登录 Tailscale，且 ACL 允许 Barman 宿主机访问 PostgreSQL 的 5432 端口。
-
-同一个 Barman host 备份多个 PostgreSQL 时，在 `config/` 里为每个 PostgreSQL 增加一个 `.conf` 文件，并在 `config/pgpass` 里追加对应的 `barman` 和 `streaming_barman` 两行密码即可，定时任务会自动遍历所有 `config/*.conf` 里的 server。
-
-
-2. 手动触发 Barman Cron 维护以创建 Slot 与进行第一次 WAL 归档
+也可以使用安装任务生成密码：
 
 ```bash
-docker exec barman barman cron
+mise run postgres-install
 ```
 
-3. 检查连接状态
+异地 Barman 通过 Tailscale 访问时，把 `.env` 中的 `POSTGRES_BIND_ADDRESS` 设置为 PostgreSQL 宿主机的 Tailscale IP。不要直接绑定所有公网接口。
+
+## 部署 Barman Edge
 
 ```bash
-docker exec barman barman check streaming-backup-server
+mise run barman-edge-install
 ```
 
-4. （可选的）配置定时任务
+或者按 [`barman-edge/README.md`](./barman-edge/README.md) 手动配置。核心 server 配置是：
+
+```ini
+backup_method = postgres
+streaming_archiver = on
+slot_name = barman_edge
+basebackups_directory = s3://bucket/postgres-backups
+wals_directory = s3://bucket/postgres-backups
+```
+
+对于 RustFS、MinIO 等 S3 兼容服务，在 `.env` 中设置：
 
 ```bash
-vim config/barman.crontab
+AWS_ENDPOINT_URL=http://object-storage:9000
 ```
+
+AWS S3 使用默认端点时留空。
+
+## 部署 Barman Offsite
+
+```bash
+mise run barman-offsite-install
+```
+
+或者按 [`barman-offsite/README.md`](./barman-offsite/README.md) 手动配置。`conninfo` 和 `streaming_conninfo` 应指向 PostgreSQL 宿主机的 Tailscale IP 或 MagicDNS 名称。
+
+同一个 offsite Barman 可以管理多个 PostgreSQL。每个 PostgreSQL 使用独立 `.conf` 文件、server 名和复制槽。
+
+## 调度
+
+默认模板将两条基础备份错峰：
+
+| 时间 | 任务 |
+|---|---|
+| 每分钟 | 两套 Barman 运行 `barman cron`，接收 WAL 并执行维护 |
+| 02:07 | `barman-edge` 创建 S3 基础备份 |
+| 04:07 | `barman-offsite` 创建本地基础备份 |
+| 每周 | 分别验证最新备份 |
+
+不要让两套完整基础备份同时运行，否则会重复占用 PostgreSQL 磁盘、CPU 和网络。
 
 ## 常用命令
 
-### 容器管理
+```bash
+# PostgreSQL
+docker exec -it -u postgres postgres psql -U postgres
+
+# Edge
+docker exec barman-edge barman check postgres-edge
+docker exec barman-edge barman backup postgres-edge --wait
+docker exec barman-edge barman list-backups postgres-edge
+
+# Offsite
+docker exec barman-offsite barman check postgres-offsite
+docker exec barman-offsite barman backup postgres-offsite --wait
+docker exec barman-offsite barman list-backups postgres-offsite
+```
+
+## 测试
+
+本地 smoke 会启动 PostgreSQL、RustFS、Barman Edge 和 Barman Offsite，验证：
+
+- 两个独立复制槽都能持续接收 WAL
+- edge 基础备份和 WAL 写入 S3
+- edge 可以从云端恢复基础备份
+- offsite 基础备份写入本地卷并通过完整性检查
 
 ```bash
-# 进入 psql
-docker exec -it postgres psql -U postgres
-
-# 进入 Barman 容器
-docker exec -it barman bash
-
-# 查看 Barman 日志
-docker logs -f barman
-
-# 查看 cron 任务状态
-docker exec barman crontab -l
-
-# 手动测试 Posrgres 连接
-docker exec barman psql -c 'SELECT version()' -U barman -h pg-host postgres
+mise run barman-smoke
 ```
 
-### Barman 操作
+## 当前限制
 
-```bash
-# 测试 Barman 连接
-docker exec barman barman check streaming-backup-server
-
-# 手动创建备份
-docker exec barman barman backup streaming-backup-server
-
-# 查看备份列表
-docker exec barman barman list-backups streaming-backup-server
-
-# 查看服务器状态
-docker exec barman barman status streaming-backup-server
-
-# 查看 replication 状态
-docker exec barman barman replication-status streaming-backup-server
-
-# 恢复到指定时间点（示例）
-docker compose --profile recovery rm -sf pg-recovered fix-recover-permissions barman-restore
-docker volume rm barman_barman-recover 2>/dev/null || true
-docker compose --profile recovery run --rm barman-restore \
-  barman restore \
-  --target-time "2026-03-10 12:00:00" \
-  --target-action=promote \
-  streaming-backup-server latest /recover
-docker compose --profile recovery run --rm fix-recover-permissions
-```
-
-### 本地恢复验证
-
-在 Barman 本机恢复备份并启动一个临时 PG 来验证数据完整性。
-
-```bash
-# 1. 恢复最新备份到命名卷
-docker compose --profile recovery rm -sf pg-recovered fix-recover-permissions barman-restore
-docker volume rm barman_barman-recover 2>/dev/null || true
-docker compose --profile recovery run --rm barman-restore \
-  barman restore streaming-backup-server latest /recover
-
-# 2. 修复权限并拉起验证用 PG（端口 5433，profile 控制，平时不启动）
-docker compose --profile recovery run --rm fix-recover-permissions
-docker compose --profile recovery up -d pg-recovered
-
-# 3. 验证数据
-docker exec pg-recovered psql -U postgres -c '\dt'
-
-# 从 barman 容器直连（都在 barman-net 上）
-docker exec barman psql -h pg-recovered -U postgres -c "SELECT count(*) FROM your_table;"
-
-# 或从宿主机
-psql -h localhost -p 5433 -U postgres
-
-# 4. 验证完毕，关掉验证 PG
-docker compose --profile recovery stop pg-recovered
-
-# 如需重新恢复，先删除恢复卷再重来
-docker compose --profile recovery rm -sf pg-recovered fix-recover-permissions barman-restore
-docker volume rm barman_barman-recover 2>/dev/null || true
-```
-
-> PITR（恢复到指定时间点）：在 `restore` 命令中加 `--target-time "2026-03-10 14:30:00"` 和 `--target-action=promote`
-
-### PostgreSQL 配置导出
-
-```bash
-# 导出 PG 默认配置
-docker exec postgres cat /var/lib/postgresql/data/postgresql.conf > pg/postgresql.conf
-docker exec postgres cat /var/lib/postgresql/data/pg_hba.conf > pg/pg_hba.conf
-```
-
-## 定时任务说明
-
-> **重要：** 如果不配置 `barman.crontab`，Barman 容器会正常运行但**不会自动备份**，也不会报错。请在部署后确认定时任务已正确配置。
-
-Barman 容器内运行 cron 守护进程，定时任务配置文件位于 `barman/config/barman.crontab`。
-
-默认任务（`barman.crontab.example`）：
-每分钟执行 `barman cron` 完成 WAL 归档和过期备份清理，每天凌晨 2 点执行 `barman-for-each-server backup` 为所有已配置 server 创建基础备份，每周日凌晨 3 点执行 `barman-for-each-server verify-backup latest` 验证所有 server 的最新备份完整性。
-
-修改定时任务后需要重启容器：
-```bash
-cd barman
-docker compose restart barman
-```
-
-## 健康检查
-
-Barman 容器内置 HTTP 健康检查服务，定时运行 `barman check` 并缓存结果，适合外部监控系统（如 UptimeFlare）pull 使用。
-
-> **注意：** `barman check` 本身执行很慢（约 30 秒），且容易超时。这里的设计是异步缓存结果，HTTP 端点只返回缓存，响应是即时的。
-> 但**容器首次启动时**，第一次 check 尚未完成，端点会返回 503 直到首次检查结束（~30s）。
-> 监控系统建议配置：超时 ≥ 60s，失败重试 ≥ 3 次后再告警，避免误报。
-
-端点 `http://127.0.0.1:8000/` 返回所有 server 的聚合状态，只有全部 server 健康才返回 `200`，任意 server 检查失败、结果过期或首次检查未完成都会返回 `503`。端点 `http://127.0.0.1:8000/<server-name>` 只返回同名 server 的状态，适合给每个 PostgreSQL 单独配置监控，未知 server 返回 `404`。Compose 默认只把端口发布到宿主机回环地址；需要从其他主机监控时，显式修改 `.env` 中的 `HEALTH_CHECK_HOST`。
-
-环境变量：
-
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `HEALTH_CHECK_HOST` | `127.0.0.1` | 健康检查发布到宿主机的监听地址 |
-| `HEALTH_CHECK_PORT` | `8000` | HTTP 监听端口 |
-| `CHECK_INTERVAL` | `300` | 检查间隔（秒） |
-| `FAIL_THRESHOLD` | `3` | 连续失败多少次后才标记为异常 |
-
-健康检查会自动读取 `config/*.conf` 中的所有 Barman server 段，并逐个运行 `barman check`，返回结果里会按 server 名展示状态。
-
-手动测试：
-```bash
-curl http://127.0.0.1:8000/
-curl http://127.0.0.1:8000/streaming-backup-server
-```
-
-## S3 云备份（barman-cloud sidecar）
-
-除了 Barman 流复制备份，PG_HOST 端还可以通过 barman-cloud sidecar 将 WAL 和基础备份直接推送到 S3 兼容存储，作为不依赖 Barman 机器的异地容灾方案。
-
-**架构**：PG 容器保持原版 `postgres:17` 不修改，通过 `archive_command` 将 WAL 文件复制到共享卷，sidecar 容器定时扫描共享卷并上传到 S3。
-
-```
-PG 容器                                Sidecar 容器 (profile: cloud)
-┌──────────────────────┐               ┌──────────────────────────┐
-│ archive_command:     │  共享卷        │ barman-cli-cloud         │
-│   cp %p /archive/%f ─┼──→ /archive ──┼→ wal-push.sh ────────────┼──→ S3
-│                      │               │  cloud-backup.sh ────────┼──→ S3
-│                      │  Docker 内网   │  cloud-backup-delete.sh ─┼──→ S3
-│                      │◄──────────────┤   (复制协议连接 PG)       │
-└──────────────────────┘               └──────────────────────────┘
-```
-
-> `S3_BUCKET_URL` 未配置时，`archive_command` 不会往共享卷写入任何文件，行为与不启用云备份完全一致。
-
-### 启用云备份
-
-1. 配置 S3 凭证（编辑 `pg/.env`）：
-
-```bash
-S3_BUCKET_URL=s3://your-bucket/your-prefix
-S3_ENDPOINT_URL=https://your-endpoint    # AWS S3 留空
-AWS_ACCESS_KEY_ID=your-access-key
-AWS_SECRET_ACCESS_KEY=your-secret-key
-```
-
-2. 创建定时任务配置：
-
-```bash
-cd pg
-cp cloud-crontab.example cloud-crontab
-vim cloud-crontab  # 按需调整调度时间
-```
-
-3. 构建并启动 sidecar：
-
-```bash
-cd pg
-docker compose --profile cloud up -d --build
-```
-
-### 云备份常用命令
-
-```bash
-# 手动推送 WAL 文件
-docker exec barman-cloud /usr/local/bin/wal-push.sh
-
-# 手动创建基础备份
-docker exec barman-cloud /usr/local/bin/cloud-backup.sh
-
-# 查看 S3 中的备份列表
-docker exec barman-cloud barman-cloud-backup-list \
-    --cloud-provider aws-s3 \
-    --endpoint-url "$S3_ENDPOINT_URL" \
-    "$S3_BUCKET_URL" pg
-
-# 查看 sidecar 日志
-docker logs -f barman-cloud
-
-# 手动清理旧备份
-docker exec barman-cloud /usr/local/bin/cloud-backup-delete.sh
-```
-
-### 云备份环境变量
-
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `S3_BUCKET_URL` | （空） | S3 目标地址，如 `s3://my-bucket/pg-backup` |
-| `S3_ENDPOINT_URL` | （空） | S3 兼容服务端点（AWS S3 留空） |
-| `AWS_ACCESS_KEY_ID` | （空） | AWS 访问密钥 |
-| `AWS_SECRET_ACCESS_KEY` | （空） | AWS 密钥 |
-| `BARMAN_CLOUD_SERVER_NAME` | `pg` | S3 路径中的服务器名 |
-| `BARMAN_CLOUD_COMPRESSION` | `gzip` | 压缩算法：gzip / bzip2 / snappy |
-| `BARMAN_CLOUD_RETENTION` | `RECOVERY WINDOW OF 7 DAYS` | 备份保留策略 |
-| `BARMAN_CLOUD_MIN_REDUNDANCY` | `1` | 最少保留备份数 |
+Barman 3.19 的 `backup_method = postgres` 流式直写云存储仍被上游标记为 experimental。用于生产前应在目标 S3 实现上验证上传中断、staging 达到上限、保留策略和 PITR 恢复。

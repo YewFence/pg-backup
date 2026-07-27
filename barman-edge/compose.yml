@@ -1,0 +1,36 @@
+name: barman-edge
+
+services:
+  barman-edge:
+    image: ${BARMAN_IMAGE:-ghcr.io/yewfence/pg-backup/barman:latest}
+    container_name: ${BARMAN_CONTAINER_NAME:-barman-edge}
+    init: true
+    restart: unless-stopped
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?AWS_ACCESS_KEY_ID must be set}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?AWS_SECRET_ACCESS_KEY must be set}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+      AWS_ENDPOINT_URL: ${AWS_ENDPOINT_URL:-}
+      AWS_REQUEST_CHECKSUM_CALCULATION: ${AWS_REQUEST_CHECKSUM_CALCULATION:-when_required}
+      AWS_RESPONSE_CHECKSUM_VALIDATION: ${AWS_RESPONSE_CHECKSUM_VALIDATION:-when_required}
+      HEALTH_CHECK_PORT: ${HEALTH_CHECK_PORT:-8000}
+      CHECK_INTERVAL: ${CHECK_INTERVAL:-300}
+      FAIL_THRESHOLD: ${FAIL_THRESHOLD:-3}
+      BARMAN_UID: ${BARMAN_UID:-1000}
+      BARMAN_GID: ${BARMAN_GID:-1000}
+      BARMAN_FIX_OWNERSHIP: ${BARMAN_FIX_OWNERSHIP:-true}
+    volumes:
+      - ${BARMAN_VOLUME:-barman-edge-data}:/var/lib/barman
+      - ./config:/etc/barman.d:ro
+    ports:
+      - "${HEALTH_CHECK_HOST:-127.0.0.1}:${HEALTH_CHECK_PORT:-8000}:${HEALTH_CHECK_PORT:-8000}"
+    networks:
+      - pg-net
+
+networks:
+  pg-net:
+    external: true
+    name: ${POSTGRES_NETWORK_NAME:-pg-net}
+
+volumes:
+  barman-edge-data:

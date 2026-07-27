@@ -2,31 +2,65 @@ name: pg-backup-smoke
 
 services:
   postgres:
-    build:
-      context: ../pg
+    image: postgres:17.10
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: postgres
       BARMAN_PASSWORD: barman
       STREAMING_BARMAN_PASSWORD: streaming_barman
-      S3_BUCKET_URL: ""
+      POSTGRES_EXPORTER_PASSWORD: postgres_exporter
     volumes:
-      - ../pg/initdb:/docker-entrypoint-initdb.d:ro
-      - ../pg/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
-      - ../pg/postgresql.conf:/etc/postgresql/postgresql.conf:ro
-      - wal-archive:/archive
+      - ../postgres/initdb/00-create-barman-users.sh:/docker-entrypoint-initdb.d/00-create-barman-users.sh:ro
+      - ../postgres/initdb/10-create-monitoring-user.sh:/docker-entrypoint-initdb.d/10-create-monitoring-user.sh:ro
+      - ../postgres/initdb/99-setup-config.sh:/docker-entrypoint-initdb.d/99-setup-config.sh:ro
+      - ../postgres/sql:/usr/local/share/postgres/sql:ro
+      - ./initdb/90-seed.sql:/docker-entrypoint-initdb.d/90-seed.sql:ro
+      - ../postgres/pg_hba.conf:/config/pg_hba.conf:ro
+      - ../postgres/conf.d:/config/conf.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d postgres"]
       interval: 2s
       timeout: 3s
       retries: 30
 
-  barman:
+  rustfs:
+    image: rustfs/rustfs:latest
+    environment:
+      RUSTFS_ACCESS_KEY: pgbackupsmoke
+      RUSTFS_SECRET_KEY: ChangeMe123!
+      RUSTFS_CONSOLE_ENABLE: "false"
+    command: /data
+    volumes:
+      - rustfs-data:/data
+
+  barman-edge:
     build:
       context: ../barman
-      secrets:
-        - mise_github_token
+    init: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      AWS_ACCESS_KEY_ID: pgbackupsmoke
+      AWS_SECRET_ACCESS_KEY: ChangeMe123!
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_ENDPOINT_URL: http://rustfs:9000
+      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+      AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+      HEALTH_CHECK_PORT: 8000
+      CHECK_INTERVAL: 30
+      FAIL_THRESHOLD: 1
+      BARMAN_UID: 1000
+      BARMAN_GID: 1000
+      BARMAN_FIX_OWNERSHIP: "true"
+    volumes:
+      - barman-edge-data:/var/lib/barman
+      - ./config/edge:/etc/barman.d:ro
+
+  barman-offsite:
+    build:
+      context: ../barman
     init: true
     depends_on:
       postgres:
@@ -39,19 +73,16 @@ services:
       BARMAN_GID: 1000
       BARMAN_FIX_OWNERSHIP: "true"
     volumes:
-      - barman-data:/var/lib/barman
-      - ./config:/etc/barman.d:ro
+      - barman-offsite-data:/var/lib/barman
+      - ./config/offsite:/etc/barman.d:ro
 
 volumes:
-  barman-data:
-  wal-archive:
+  barman-edge-data:
+  barman-offsite-data:
+  rustfs-data:
 
 networks:
   default:
     ipam:
       config:
         - subnet: 172.16.255.0/24
-
-secrets:
-  mise_github_token:
-    environment: MISE_GITHUB_TOKEN

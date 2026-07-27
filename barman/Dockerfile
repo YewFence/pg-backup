@@ -1,31 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
-FROM debian:bookworm-slim AS supercronic
-
-RUN apt-get update && \
-    apt-get install -y \
-    ca-certificates \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN curl -fsSL https://mise.run -o /tmp/install-mise.sh \
-    && MISE_INSTALL_PATH=/usr/local/bin/mise sh /tmp/install-mise.sh \
-    && rm -f /tmp/install-mise.sh
-
-# renovate: datasource=github-releases depName=aptible/supercronic versioning=semver
-ARG SUPERCRONIC_VERSION=v0.2.45
-RUN --mount=type=secret,id=mise_github_token,required=false \
-    MISE_DATA_DIR=/tmp/mise-data \
-    MISE_CACHE_DIR=/tmp/mise-cache \
-    MISE_INSTALL_ROOT=/tmp/supercronic \
-    sh -euxc '\
-      if [ -f /run/secrets/mise_github_token ]; then \
-        export MISE_GITHUB_TOKEN="$(cat /run/secrets/mise_github_token)"; \
-      fi; \
-      mkdir -p "$MISE_INSTALL_ROOT"; \
-      mise install-into "github:aptible/supercronic@${SUPERCRONIC_VERSION}" "$MISE_INSTALL_ROOT"; \
-      install -m 0755 "$MISE_INSTALL_ROOT/supercronic" /usr/local/bin/supercronic; \
-    '
+# renovate: datasource=docker depName=ghcr.io/astral-sh/uv
+FROM ghcr.io/astral-sh/uv:0.11.32 AS uv
 
 FROM debian:bookworm-slim
 
@@ -33,12 +9,15 @@ FROM debian:bookworm-slim
 ARG BARMAN_VERSION=3.19.1-3.pgdg12+1
 # renovate: datasource=deb depName=postgresql-client-17 suite=bookworm-pgdg
 ARG POSTGRESQL_CLIENT_VERSION=17.10-1.pgdg12+1
+# renovate: datasource=pypi depName=boto3
+ARG BOTO3_VERSION=1.43.56
 ARG BARMAN_UID=1000
 ARG BARMAN_GID=1000
 
 RUN apt-get update && \
-    apt-get install -y \
+    apt-get install -y --no-install-recommends \
     ca-certificates \
+    cron \
     curl \
     gosu \
     gnupg \
@@ -46,15 +25,21 @@ RUN apt-get update && \
     passwd \
     && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /usr/share/keyrings/postgresql-keyring.gpg \
     && echo "deb [signed-by=/usr/share/keyrings/postgresql-keyring.gpg] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
-    && apt-get update && \
-    apt-get install -y \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
     barman=${BARMAN_VERSION} \
     barman-cli=${BARMAN_VERSION} \
     python3-barman=${BARMAN_VERSION} \
     postgresql-client-17=${POSTGRESQL_CLIENT_VERSION} \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=supercronic /usr/local/bin/supercronic /usr/local/bin/supercronic
+COPY --from=uv /uv /usr/local/bin/uv
+RUN uv pip install \
+    --target /usr/local/lib/python3.11/dist-packages \
+    --no-cache \
+    "boto3==${BOTO3_VERSION}"
 
 # Keep the Debian package user, but make its numeric identity explicit.
 RUN groupmod --gid "${BARMAN_GID}" barman && \

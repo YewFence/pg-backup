@@ -1,0 +1,13 @@
+[postgres-offsite]
+description = "Offsite Barman streaming PostgreSQL backups to local storage"
+streaming_archiver = on
+backup_method = postgres
+
+# 替换成 PostgreSQL 宿主机的 Tailscale IP 或 MagicDNS 名称。
+conninfo = host=100.x.y.z user=barman dbname=postgres
+streaming_conninfo = host=100.x.y.z user=streaming_barman dbname=postgres
+
+slot_name = barman_offsite
+create_slot = auto
+minimum_redundancy = 1
+retention_policy = RECOVERY WINDOW OF 7 DAYS

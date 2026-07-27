@@ -71,6 +71,12 @@ prepare_writable_paths() {
 if [ "$(id -u)" = "0" ]; then
     configure_barman_user
     prepare_writable_paths
+
+    # Debian cron must remain root so it can switch scheduled jobs to barman.
+    if [ "${1:-}" = "/usr/local/bin/entrypoint.sh" ]; then
+        exec "$@"
+    fi
+
     exec gosu barman "$@"
 fi
 

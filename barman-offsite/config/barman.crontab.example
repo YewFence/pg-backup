@@ -1,0 +1,11 @@
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin
+
+# 接收 WAL、归档和执行保留策略维护。
+* * * * * barman -q cron
+
+# 与 edge 基础备份错峰，降低 PostgreSQL 磁盘和网络压力。
+7 4 * * * barman-for-each-server backup --wait
+
+# 每周验证最新备份。
+17 5 * * 0 barman-for-each-server verify-backup latest
