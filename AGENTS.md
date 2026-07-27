@@ -9,13 +9,13 @@
 
 - `pg/` 和宿主机视为**同一台主机**（本地环境）
 - `barman/` 视为**异地主机**（远程备份服务器）
-- 两者仅通过 **Tailscale** 进行通信
+- 两者仅通过宿主机上的 **Tailscale** 进行通信，Barman 容器直接连接 PG 的 Tailscale IP
 
 ### 目录说明
 
 - `pg/` - PostgreSQL 17 测试实例，是需要被备份的数据库
-- `barman/` - Barman 备份服务器配置，通过 Tailscale 组网连接到 PG
-  - `barman/docker-compose.yml` - Barman 服务 + Tailscale sidecar
+- `barman/` - Barman 备份服务器配置，通过宿主机的 Tailscale 身份连接到 PG
+  - `barman/compose.yml` - Barman 服务及本地恢复验证环境
   - `barman/config/` - Barman 服务器配置文件，挂载到容器的 `/etc/barman.d`
   - `barman/Dockerfile` - 基于 debian:bookworm-slim，安装 barman + postgresql-client-17
 - `pg-prod/` - **生产环境 PostgreSQL 模板**，基于 `pg/` 扩展而来，包含性能优化和健康检查等生产级特性

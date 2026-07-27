@@ -1,31 +1,10 @@
 services:
-  tailscale:
-    image: tailscale/tailscale:latest
-    container_name: barman-tailscale
-    hostname: barman
-    restart: unless-stopped
-    environment:
-      - TS_AUTHKEY=${TS_AUTHKEY}
-      - TS_STATE_DIR=/var/lib/tailscale
-      - TS_USERSPACE=false
-    volumes:
-      - tailscale-state:/var/lib/tailscale
-      - /dev/net/tun:/dev/net/tun
-    cap_add:
-      - SYS_MODULE
-      - NET_ADMIN
-    networks:
-      - barman-net
-
   barman:
     image: ${BARMAN_IMAGE:-ghcr.io/yewfence/pg-backup/barman:latest}
     # build: .
     container_name: barman
     init: true
     restart: unless-stopped
-    network_mode: "service:tailscale"
-    depends_on:
-      - tailscale
     environment:
       HEALTH_CHECK_PORT: ${HEALTH_CHECK_PORT:-8000}
       CHECK_INTERVAL: ${CHECK_INTERVAL:-300}
@@ -37,6 +16,10 @@ services:
       - ${BARMAN_VOLUME:-barman-data}:/var/lib/barman
       # 需要提供 .conf 和 pgpass 文件，否则 barman 会无法连接到任何 PG 实例
       - ./config:/etc/barman.d
+    ports:
+      - "${HEALTH_CHECK_HOST:-127.0.0.1}:${HEALTH_CHECK_PORT:-8000}:${HEALTH_CHECK_PORT:-8000}"
+    networks:
+      - barman-net
 
   # 一次性恢复服务，避免常驻 barman 容器长期占用恢复卷
   barman-restore:
@@ -44,9 +27,6 @@ services:
     # build: .
     profiles: ["recovery"]
     init: true
-    network_mode: "service:tailscale"
-    depends_on:
-      - tailscale
     environment:
       BARMAN_UID: ${BARMAN_UID:-1000}
       BARMAN_GID: ${BARMAN_GID:-1000}
@@ -55,6 +35,8 @@ services:
       - ${BARMAN_VOLUME:-barman-data}:/var/lib/barman
       - barman-recover:/recover
       - ./config:/etc/barman.d
+    networks:
+      - barman-net
     entrypoint:
       ["/usr/local/bin/docker-entrypoint.sh", "/usr/local/bin/setup-pgpass.sh"]
     command: ["barman", "--help"]
@@ -98,6 +80,5 @@ networks:
     driver: bridge
 
 volumes:
-  tailscale-state:
   barman-data:
   barman-recover:

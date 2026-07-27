@@ -1,6 +1,6 @@
 # Barman 备份服务
 
-基于 [Barman](https://pgbarman.org/) 的 PostgreSQL 流复制备份服务，通过 Tailscale 组网连接 PG 服务器。
+基于 [Barman](https://pgbarman.org/) 的 PostgreSQL 流复制备份服务。容器使用普通 Docker bridge 网络，通过宿主机的 Tailscale 身份连接 PG 的 Tailscale IP。
 
 ## 配置文件
 
@@ -49,6 +49,8 @@ docker compose restart barman
 ## 基本用法
 
 ### 启动服务
+
+Barman 宿主机需要提前安装并登录 Tailscale，配置文件中的 PG host 填写目标宿主机的 Tailscale IP。
 
 ```bash
 # 启动，会拉取预构建镜像并运行容器
@@ -115,11 +117,13 @@ docker logs barman
 
 ```bash
 # 聚合状态，只有所有 server 健康才返回 200
-curl http://<barman-tailscale-ip>:8000/
+curl http://127.0.0.1:8000/
 
 # 单个 server 状态，路径名就是 Barman server 名
-curl http://<barman-tailscale-ip>:8000/streaming-backup-server
+curl http://127.0.0.1:8000/streaming-backup-server
 ```
+
+Compose 默认只把健康检查端口发布到宿主机的 `127.0.0.1`。需要远程访问时，通过 `.env` 的 `HEALTH_CHECK_HOST` 显式指定监听地址。
 
 ## 完整测试流程
 

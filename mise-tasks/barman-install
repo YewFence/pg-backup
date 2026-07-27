@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #MISE description="初始化配置并部署 Barman（备份服务器首次部署）"
-set -e
+set -euo pipefail
 SOURCE_DIR="barman"
 TARGET_DIR="../barman"
 ENV_FILE="$SOURCE_DIR/.env"
@@ -18,16 +18,30 @@ if [ -d "$TARGET_DIR" ]; then
     exit 1
 fi
 
-echo "请输入 Tailscale Auth Key（TS_AUTHKEY，格式 tskey-auth-xxx）："
-read -rs TS_AUTHKEY
+echo "请输入 PostgreSQL 宿主机的 Tailscale IP（PG_HOST）："
+read -r PG_HOST
+if [ -z "$PG_HOST" ]; then
+    echo "错误：PG_HOST 不能为空。"
+    exit 1
+fi
+
+echo "请输入 PostgreSQL 的 Barman 用户密码（BARMAN_PASSWORD）："
+read -rs BARMAN_PASSWORD
 echo ""
-if [ -z "$TS_AUTHKEY" ]; then
-    echo "错误：TS_AUTHKEY 不能为空。"
+if [ -z "$BARMAN_PASSWORD" ]; then
+    echo "错误：BARMAN_PASSWORD 不能为空。"
+    exit 1
+fi
+
+echo "请输入 PostgreSQL 的流复制用户密码（STREAMING_BARMAN_PASSWORD）："
+read -rs STREAMING_BARMAN_PASSWORD
+echo ""
+if [ -z "$STREAMING_BARMAN_PASSWORD" ]; then
+    echo "错误：STREAMING_BARMAN_PASSWORD 不能为空。"
     exit 1
 fi
 
 cp "$SOURCE_DIR/.env.example" "$ENV_FILE"
-sed -i "s|^TS_AUTHKEY=.*|TS_AUTHKEY=${TS_AUTHKEY}|" "$ENV_FILE"
 
 echo "配置已写入 $ENV_FILE"
 
@@ -35,7 +49,7 @@ cat > "$PGPASS_FILE" << EOF
 ${PG_HOST}:5432:postgres:barman:${BARMAN_PASSWORD}
 ${PG_HOST}:5432:*:streaming_barman:${STREAMING_BARMAN_PASSWORD}
 EOF
-chmod 644 "$PGPASS_FILE"
+chmod 600 "$PGPASS_FILE"
 echo "pgpass 已生成：$PGPASS_FILE"
 
 # 如果 barman 服务器配置不存在，从 example 复制并替换 host

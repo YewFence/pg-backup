@@ -1,7 +1,7 @@
 # pg-backup
 
-这是一个 PostgreSQL / Barman 生产部署模版项目兼测试项目，用于测试 [Barman](https://pgbarman.org/) 对 PostgreSQL 数据库的备份与恢复功能，以及通过 docker compose 快速部署可被 Barman 连接并备份的 PostgreSQL 实例与可通过 Tailscale 连接 PostgreSQL 实例的 Barman 实例
-> 测试环境假设：宿主机 + pg/ 与 barman/ 目录在不同机器上，且宿主机已安装并登录 Tailscale 作为 Tailscale 节点，barman 使用 Tailscale Docker 作为 Tailscale 节点。
+这是一个 PostgreSQL / Barman 生产部署模版项目兼测试项目，用于测试 [Barman](https://pgbarman.org/) 对 PostgreSQL 数据库的备份与恢复功能，以及通过 Docker Compose 快速部署 PostgreSQL 与 Barman 实例。
+> 测试环境假设：`pg/` 与 `barman/` 部署在不同宿主机，两台宿主机均已安装并登录 Tailscale。Barman 容器直接连接 PostgreSQL 宿主机的 Tailscale IP，并使用 Barman 宿主机的 Tailscale 身份。
 
 ## 项目结构
 
@@ -22,7 +22,7 @@
 │       └── sidecar-entrypoint.sh   # sidecar 入口
 ├── barman/                     # Barman 客户端（备份工具）
 │   ├── Dockerfile              # Barman 运行环境
-│   ├── compose.yml             # Barman + Tailscale sidecar
+│   ├── compose.yml             # Barman 服务及本地恢复验证环境
 │   ├── setup-pgpass.sh         # 配置数据库密码
 │   ├── health-check.py         # 健康检查 HTTP 服务
 │   ├── entrypoint.sh           # 容器启动脚本
@@ -32,7 +32,7 @@
 │   │   └── barman.crontab      # 定时任务配置
 │   ├── RECOVERY-GUIDE.md       # 详细恢复指南
 │   ├── E2E-TEST.md             # 端到端测试流程
-│   └── .env                    # Tailscale auth key（不提交）
+│   └── .env                    # Barman 部署参数（不提交）
 └── README.md
 ```
 
@@ -50,7 +50,7 @@
 - [tailscale](https://tailscale.com)
 - docker compose
 
-> PostgreSQL 宿主机需要 Tailscale 客户端，Barman 宿主机无需 Tailscale 客户端
+> PostgreSQL 与 Barman 宿主机都需要安装并登录 Tailscale，容器内不运行 Tailscale。
 > 
 > TailscaleACL 需要允许 Barman 宿主机访问 PostgreSQL 宿主机的 5432 端口
 
@@ -67,33 +67,31 @@ cd ../pg && docker compose up -d
 
 ### B 从模版安装并启动 Barman
 
-1. 获取 Tailscale auth key: https://login.tailscale.com/admin/settings/keys
-
-2. 安装并启动
+1. 安装并启动
 ```bash
 mise r --raw barman-install
-# 必须输入 PostgreSQL 的密码
+# 按提示输入 PostgreSQL 宿主机的 Tailscale IP，以及 barman 和 streaming_barman 用户密码
 cd ../barman && docker compose up -d
 ```
 
-Barman 容器会加入你的 Tailscale 网络，通过宿主机的 Tailscale hostname 连接 PostgreSQL。请确认 ACL 配置正常
+Barman 配置中的 PostgreSQL host 应填写目标宿主机的 Tailscale IP。容器通过 Barman 宿主机访问 tailnet，请确认两台宿主机已登录 Tailscale，且 ACL 允许 Barman 宿主机访问 PostgreSQL 的 5432 端口。
 
 同一个 Barman host 备份多个 PostgreSQL 时，在 `config/` 里为每个 PostgreSQL 增加一个 `.conf` 文件，并在 `config/pgpass` 里追加对应的 `barman` 和 `streaming_barman` 两行密码即可，定时任务会自动遍历所有 `config/*.conf` 里的 server。
 
 
-3. 手动触发 Barman Cron 维护以创建 Slot 与进行第一次 WAL 归档
+2. 手动触发 Barman Cron 维护以创建 Slot 与进行第一次 WAL 归档
 
 ```bash
 docker exec barman barman cron
 ```
 
-4. 检查连接状态
+3. 检查连接状态
 
 ```bash
 docker exec barman barman check streaming-backup-server
 ```
 
-5. （可选的）配置定时任务
+4. （可选的）配置定时任务
 
 ```bash
 vim config/barman.crontab
@@ -214,12 +212,13 @@ Barman 容器内置 HTTP 健康检查服务，定时运行 `barman check` 并缓
 > 但**容器首次启动时**，第一次 check 尚未完成，端点会返回 503 直到首次检查结束（~30s）。
 > 监控系统建议配置：超时 ≥ 60s，失败重试 ≥ 3 次后再告警，避免误报。
 
-端点 `http://<barman-tailscale-ip>:8000/` 返回所有 server 的聚合状态，只有全部 server 健康才返回 `200`，任意 server 检查失败、结果过期或首次检查未完成都会返回 `503`。端点 `http://<barman-tailscale-ip>:8000/<server-name>` 只返回同名 server 的状态，适合给每个 PostgreSQL 单独配置监控，未知 server 返回 `404`。
+端点 `http://127.0.0.1:8000/` 返回所有 server 的聚合状态，只有全部 server 健康才返回 `200`，任意 server 检查失败、结果过期或首次检查未完成都会返回 `503`。端点 `http://127.0.0.1:8000/<server-name>` 只返回同名 server 的状态，适合给每个 PostgreSQL 单独配置监控，未知 server 返回 `404`。Compose 默认只把端口发布到宿主机回环地址；需要从其他主机监控时，显式修改 `.env` 中的 `HEALTH_CHECK_HOST`。
 
 环境变量：
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
+| `HEALTH_CHECK_HOST` | `127.0.0.1` | 健康检查发布到宿主机的监听地址 |
 | `HEALTH_CHECK_PORT` | `8000` | HTTP 监听端口 |
 | `CHECK_INTERVAL` | `300` | 检查间隔（秒） |
 | `FAIL_THRESHOLD` | `3` | 连续失败多少次后才标记为异常 |
@@ -228,8 +227,8 @@ Barman 容器内置 HTTP 健康检查服务，定时运行 `barman check` 并缓
 
 手动测试：
 ```bash
-curl http://<barman-tailscale-ip>:8000/
-curl http://<barman-tailscale-ip>:8000/streaming-backup-server
+curl http://127.0.0.1:8000/
+curl http://127.0.0.1:8000/streaming-backup-server
 ```
 
 ## S3 云备份（barman-cloud sidecar）

@@ -10,7 +10,7 @@ pg/                         barman/
 └── ...                     └── (barman-recover)  ← 本地恢复命名卷
 ```
 
-Barman 通过 Tailscale 连接到 PG，备份数据保存在 `barman-data` 命名卷，恢复中转数据保存在 `barman-recover` 命名卷，`pg-recovered` 是本地恢复验证用的独立 PostgreSQL 实例，使用 `recovery` profile 启动并监听宿主机 `5433` 端口。
+Barman 容器通过宿主机的 Tailscale 身份连接到 PG，备份数据保存在 `barman-data` 命名卷，恢复中转数据保存在 `barman-recover` 命名卷，`pg-recovered` 是本地恢复验证用的独立 PostgreSQL 实例，使用 `recovery` profile 启动并监听宿主机 `5433` 端口。
 
 ## 官方恢复建议
 
@@ -20,9 +20,9 @@ Barman 官方文档推荐用 `barman restore SERVER_NAME BACKUP_ID DESTINATION_P
 
 ## 注意事项
 
-### PG host 必须是 Tailscale 可达入口
+### PG host 必须是 Tailscale IP
 
-`barman` 服务使用 `network_mode: "service:tailscale"` 共享 Tailscale sidecar 的网络命名空间，所以不能假设 Docker Compose 里的 `postgres` 服务名一定能解析。`barman/config/streaming-backup-server.conf` 里的 `conninfo` 和 `streaming_conninfo`，都应该写成 PG 宿主机在 Tailscale 里的真实设备名、MagicDNS 名称或 Tailscale IP，例如 `fedora` 或 `100.x.y.z`。
+Barman 宿主机必须安装并登录 Tailscale。`barman` 使用普通 Docker bridge 网络，容器直接访问 PG 宿主机的 Tailscale IP，连接在 tailnet 中使用 Barman 宿主机的身份。`barman/config/streaming-backup-server.conf` 里的 `conninfo` 和 `streaming_conninfo` 都应填写这个 IP，例如 `100.x.y.z`。
 
 PG 容器需要把 `5432` 暴露到 PG 宿主机，或者让 PostgreSQL 本身直接运行在 Tailscale 可达的网络上。可以先从 Barman 容器里验证连接。
 
