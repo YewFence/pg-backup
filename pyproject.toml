@@ -1,0 +1,38 @@
+[project]
+name = "pg-backup-restore"
+version = "0.1.0"
+description = "Interactive disaster recovery tooling for the pg-backup templates"
+requires-python = ">=3.12"
+dependencies = [
+    "questionary>=2.1.1,<3",
+]
+
+[project.scripts]
+pg-backup-restore = "pg_backup_restore.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.17.1,<2",
+    "pytest>=8.4.1,<9",
+    "ruff>=0.12.7,<1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["pg_backup_restore"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+ignore = ["RUF001", "RUF002", "RUF003"]
