@@ -16,53 +16,13 @@ services:
     volumes:
       - ${BARMAN_VOLUME:-barman-offsite-data}:/var/lib/barman
       - ./config:/etc/barman.d:ro
+      - type: bind
+        source: ${POSTGRES_RESTORE_ROOT:-/srv/native-docker/postgres-restore}
+        target: /restore
+        bind:
+          create_host_path: false
     ports:
       - "${HEALTH_CHECK_HOST:-127.0.0.1}:${HEALTH_CHECK_PORT:-8000}:${HEALTH_CHECK_PORT:-8000}"
-    networks:
-      - barman-offsite-net
-
-  barman-restore:
-    image: ${BARMAN_IMAGE:-ghcr.io/yewfence/pg-backup/barman:latest}
-    profiles: ["recovery"]
-    init: true
-    environment:
-      BARMAN_UID: ${BARMAN_UID:-1000}
-      BARMAN_GID: ${BARMAN_GID:-1000}
-      BARMAN_FIX_OWNERSHIP: ${BARMAN_FIX_OWNERSHIP:-true}
-    volumes:
-      - ${BARMAN_VOLUME:-barman-offsite-data}:/var/lib/barman
-      - barman-recover:/recover
-      - ./config:/etc/barman.d:ro
-    networks:
-      - barman-offsite-net
-    entrypoint: ["/usr/local/bin/docker-entrypoint.sh", "/usr/local/bin/setup-pgpass.sh"]
-    command: ["barman", "--help"]
-
-  fix-recover-permissions:
-    image: postgres:17.10
-    profiles: ["recovery"]
-    user: root
-    command:
-      - bash
-      - -ec
-      - |
-        chmod 700 /recover
-        chown -R postgres:postgres /recover
-        find /recover -type d -exec chmod 700 {} +
-    volumes:
-      - barman-recover:/recover
-    networks:
-      - barman-offsite-net
-
-  pg-recovered:
-    image: postgres:17.10
-    container_name: ${RECOVERY_CONTAINER_NAME:-postgres-recovered}
-    profiles: ["recovery"]
-    init: true
-    ports:
-      - "${RECOVERY_BIND_ADDRESS:-127.0.0.1}:${RECOVERY_PORT:-5433}:5432"
-    volumes:
-      - barman-recover:/var/lib/postgresql/data
     networks:
       - barman-offsite-net
 
@@ -72,4 +32,3 @@ networks:
 
 volumes:
   barman-offsite-data:
-  barman-recover:

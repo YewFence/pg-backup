@@ -60,11 +60,11 @@ configure_barman_user() {
 }
 
 prepare_writable_paths() {
-    mkdir -p /var/lib/barman /recover /var/log/barman
+    mkdir -p /var/lib/barman /var/log/barman
     touch /var/log/barman/barman.log
 
     if is_true "${BARMAN_FIX_OWNERSHIP:-true}"; then
-        chown -R barman:barman /var/lib/barman /recover /var/log/barman
+        chown -R barman:barman /var/lib/barman /var/log/barman
     fi
 }
 

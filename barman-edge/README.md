@@ -12,7 +12,7 @@ cp config/barman.crontab.example config/barman.crontab
 chmod 600 config/pgpass
 ```
 
-编辑 `.env` 中的 S3 凭证，并把 `config/postgres-edge.conf` 的 S3 URL 改成实际 bucket。默认通过外部 Docker 网络 `pg-net` 连接名为 `postgres` 的数据库容器。
+编辑 `.env` 中的 S3 凭证，并把 `config/postgres-edge.conf` 的 S3 URL 改成实际 bucket。默认通过外部 Docker 网络 `pg-net` 连接名为 `postgres` 的数据库容器。启动前还要按安装 task 的提示创建 `POSTGRES_RESTORE_ROOT` 及其 `data/`，容器会把完整恢复根目录预挂载到 `/restore`。
 
 ```bash
 docker compose up -d
@@ -25,10 +25,13 @@ docker exec barman-edge barman list-backups postgres-edge
 
 ## 恢复
 
-Barman 3.19 可以直接从云存储恢复：
+统一恢复工具会在当前 Barman 容器内执行恢复，沿用既有 catalog、S3 凭据和端点：
 
 ```bash
-docker exec barman-edge barman restore postgres-edge latest /var/lib/barman/restore
+mise run barman:restore -- \
+  --container barman-edge \
+  --server postgres-edge \
+  --yes
 ```
 
-生产恢复时应把目标目录替换成独立绑定挂载或一次性恢复卷，再交给新的 PostgreSQL 实例启动。云端 WAL 恢复会自动使用 `get-wal` 流程。
+所有文件恢复都显式使用 `--no-get-wal`，把启动所需 WAL 写入隔离的恢复结果；后续权限转换和临时 PostgreSQL 启动不再依赖 Barman、S3 凭据或网络。恢复工具不会替换生产 `PGDATA`。

@@ -24,7 +24,7 @@ services:
       retries: 3
       start_period: 30s
     volumes:
-      # 数据目录使用命名卷，迁移时可以由备份系统恢复。
+      # 数据目录使用 bind-backed local volume，真实数据身份是稳定宿主机路径。
       - postgres_data:/var/lib/postgresql/data
       # 首次初始化时创建备份用户，并把访问控制和性能配置复制进 PGDATA。
       - ./initdb:/docker-entrypoint-initdb.d:ro
@@ -39,6 +39,11 @@ services:
 volumes:
   postgres_data:
     name: ${POSTGRES_DATA_VOLUME_NAME:-postgres_data}
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${POSTGRES_DATA_PATH:-/srv/native-docker/postgres}
 
 networks:
   pg-net:

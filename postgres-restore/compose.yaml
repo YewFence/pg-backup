@@ -1,0 +1,24 @@
+name: postgres-restore
+
+services:
+  postgres-restore:
+    image: ${POSTGRES_IMAGE:?POSTGRES_IMAGE must be set}
+    container_name: ${POSTGRES_RESTORE_CONTAINER_NAME:-postgres-restore}
+    restart: "no"
+    init: true
+    ports:
+      - "${POSTGRES_RESTORE_BIND_ADDRESS:-127.0.0.1}:${POSTGRES_RESTORE_PORT:-5433}:5432"
+    volumes:
+      - postgres-restore-data:/var/lib/postgresql/data
+    networks:
+      - pg-net
+
+volumes:
+  postgres-restore-data:
+    external: true
+    name: ${POSTGRES_RESTORE_VOLUME_NAME:-barman-restore-postgres-data}
+
+networks:
+  pg-net:
+    external: true
+    name: ${POSTGRES_NETWORK_NAME:-pg-net}

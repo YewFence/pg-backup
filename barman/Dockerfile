@@ -23,6 +23,7 @@ RUN apt-get update && \
     gnupg \
     lsb-release \
     passwd \
+    util-linux \
     && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /usr/share/keyrings/postgresql-keyring.gpg \
     && echo "deb [signed-by=/usr/share/keyrings/postgresql-keyring.gpg] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
     && rm -rf /var/lib/apt/lists/*
@@ -44,9 +45,9 @@ RUN uv pip install \
 # Keep the Debian package user, but make its numeric identity explicit.
 RUN groupmod --gid "${BARMAN_GID}" barman && \
     usermod --uid "${BARMAN_UID}" --gid "${BARMAN_GID}" --home /var/lib/barman barman && \
-    mkdir -p /var/lib/barman /recover /var/log/barman && \
+    mkdir -p /var/lib/barman /var/log/barman && \
     touch /var/log/barman/barman.log && \
-    chown -R barman:barman /var/lib/barman /recover /var/log/barman
+    chown -R barman:barman /var/lib/barman /var/log/barman
 
 ENV BARMAN_UID=${BARMAN_UID} \
     BARMAN_GID=${BARMAN_GID} \

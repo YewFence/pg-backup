@@ -9,6 +9,8 @@ PostgreSQL 不运行备份 cron，不安装 Barman 工具，也不挂载 WAL 归
 
 ## 启动
 
+生产数据固定通过 bind-backed local volume 写入 `POSTGRES_DATA_PATH`，默认是 `/srv/native-docker/postgres`。首次启动前先按安装 task 的提示创建该目录；Compose 不会自动创建宿主机路径。
+
 ```bash
 cp .env.example .env
 docker compose up -d
@@ -24,4 +26,4 @@ docker exec -it postgres create-db-user
 docker exec postgres repair-barman-users
 ```
 
-`repair-barman-users` 用于已有数据卷升级模板时重放最小权限授权，不需要重建数据库。
+`repair-barman-users` 用于已有数据目录升级模板时重放最小权限授权，不需要重建数据库。

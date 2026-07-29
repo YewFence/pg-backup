@@ -1,2 +1,62 @@
 [tools]
 gitleaks = "latest"
+python = "3.13"
+uv = "0.11.32"
+
+[tasks.postgres-install]
+description = "初始化并复制 PostgreSQL 模板"
+file = "scripts/postgres-install"
+
+[tasks.barman-edge-install]
+description = "初始化并复制 Barman Edge 模板"
+file = "scripts/barman-edge-install"
+
+[tasks.barman-offsite-install]
+description = "初始化并复制 Barman Offsite 模板"
+file = "scripts/barman-offsite-install"
+
+[tasks.barman-smoke]
+description = "运行 Barman 两条恢复路径 smoke 测试"
+file = "scripts/barman-smoke"
+
+[tasks."barman:restore"]
+description = "交互式或非交互式恢复 Barman 文件到固定恢复槽"
+raw_args = true
+run = "uv run pg-backup-restore restore"
+
+[tasks."barman:restore:permissions"]
+description = "验证镜像并把恢复文件切换为 postgres 用户所有"
+usage = '''
+flag "--restore-root <restore-root>" env="POSTGRES_RESTORE_ROOT" default="/srv/native-docker/postgres-restore" help="恢复根目录"
+flag "--postgres-image <postgres-image>" env="POSTGRES_IMAGE" required=#true help="本机已有的完整 PostgreSQL 镜像引用"
+'''
+run = 'POSTGRES_RESTORE_ROOT="${usage_restore_root?}" POSTGRES_IMAGE="${usage_postgres_image?}" uv run pg-backup-restore permissions'
+
+[tasks."barman:restore:start"]
+description = "启动隔离的临时 PostgreSQL 验证实例"
+usage = '''
+flag "--restore-root <restore-root>" env="POSTGRES_RESTORE_ROOT" default="/srv/native-docker/postgres-restore" help="恢复根目录"
+flag "--postgres-image <postgres-image>" env="POSTGRES_IMAGE" required=#true help="本机已有的完整 PostgreSQL 镜像引用"
+flag "--network-name <network-name>" env="POSTGRES_NETWORK_NAME" default="pg-net" help="已存在的外部 Docker 网络"
+flag "--bind-address <bind-address>" env="POSTGRES_RESTORE_BIND_ADDRESS" default="127.0.0.1" help="恢复实例发布地址"
+flag "--port <port>" env="POSTGRES_RESTORE_PORT" default="5433" help="恢复实例宿主机端口"
+'''
+depends = [
+  { task = "barman:restore:permissions", args = [
+    "--restore-root", "{{usage.restore_root}}",
+    "--postgres-image", "{{usage.postgres_image}}",
+  ] },
+]
+run = '''
+POSTGRES_RESTORE_ROOT="${usage_restore_root?}" \
+POSTGRES_IMAGE="${usage_postgres_image?}" \
+POSTGRES_NETWORK_NAME="${usage_network_name?}" \
+POSTGRES_RESTORE_BIND_ADDRESS="${usage_bind_address?}" \
+POSTGRES_RESTORE_PORT="${usage_port?}" \
+uv run pg-backup-restore start
+'''
+
+[tasks."barman:restore:clean"]
+description = "拆除临时实例，并按显式确认永久清理恢复数据"
+raw_args = true
+run = "uv run pg-backup-restore clean"

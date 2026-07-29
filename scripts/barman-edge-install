@@ -6,6 +6,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOURCE_DIR="$ROOT_DIR/barman-edge"
 TARGET_DIR="${BARMAN_EDGE_INSTALL_TARGET_DIR:-$ROOT_DIR/../barman-edge}"
 
+"$ROOT_DIR/scripts/check-storage-paths.sh" barman
+
 if [ -e "$TARGET_DIR" ]; then
     echo "错误：目标路径 $TARGET_DIR 已存在。" >&2
     exit 1

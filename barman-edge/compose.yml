@@ -22,6 +22,11 @@ services:
     volumes:
       - ${BARMAN_VOLUME:-barman-edge-data}:/var/lib/barman
       - ./config:/etc/barman.d:ro
+      - type: bind
+        source: ${POSTGRES_RESTORE_ROOT:-/srv/native-docker/postgres-restore}
+        target: /restore
+        bind:
+          create_host_path: false
     ports:
       - "${HEALTH_CHECK_HOST:-127.0.0.1}:${HEALTH_CHECK_PORT:-8000}:${HEALTH_CHECK_PORT:-8000}"
     networks:
