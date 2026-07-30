@@ -33,8 +33,10 @@ postgres/         PostgreSQL 生产模板，只提供数据库和复制接口
 barman/           edge/offsite 共用的 Barman 容器镜像实现
 barman-edge/      与 PostgreSQL 同节点部署，备份直接写入 S3
 barman-offsite/   部署在异地主机，备份写入本地卷
+pg_backup_restore/ 灾难恢复 CLI，负责文件恢复、权限、启动和清理
+postgres-restore/ 隔离的临时 PostgreSQL 验证实例模板
 smoke/            同时验证 edge 和 offsite 的端到端测试
-mise-tasks/       三套模板的安装任务和 smoke 入口
+scripts/          安装脚本和 smoke 入口
 ```
 
 ## 为什么不再使用 WAL sidecar
@@ -136,14 +138,31 @@ docker exec barman-offsite barman backup postgres-offsite --wait
 docker exec barman-offsite barman list-backups postgres-offsite
 ```
 
+## 灾难恢复
+
+edge 和 offsite 共用同一套恢复入口，恢复结果固定写入与生产数据隔离的宿主机目录。文件恢复、权限转换、启动验证实例和清理是四次独立操作：
+
+```bash
+mise run barman:restore
+mise run barman:restore:permissions -- --postgres-image postgres:17.10
+mise run barman:restore:start -- --postgres-image postgres:17.10
+mise run barman:restore:clean
+```
+
+恢复工具会验证本机 Docker context、Barman `/restore` bind、固定 bind-backed volume、备份状态、WAL 清单连续性、磁盘空间、PostgreSQL 主版本和外部网络。edge 云 WAL 会先物化到恢复目录，再把 `restore_command` 固定为读取 PGDATA 内的本地 WAL，因此启动和搬运恢复结果不依赖 Barman、S3 凭据或网络。
+
+完整设计与运行约束见 [`docs/disaster-recovery.md`](./docs/disaster-recovery.md)。
+
 ## 测试
 
 本地 smoke 会启动 PostgreSQL、RustFS、Barman Edge 和 Barman Offsite，验证：
 
 - 两个独立复制槽都能持续接收 WAL
 - edge 基础备份和 WAL 写入 S3
-- edge 可以从云端恢复基础备份
-- offsite 基础备份写入本地卷并通过完整性检查
+- edge 从 S3 完成指定时间 PITR、promote 和数据边界查询
+- offsite 从本地备份完成指定时间 PITR、promote 和数据边界查询
+- 错误 bind、错误 volume、主版本不匹配和缺失外部网络会被拒绝
+- 默认清理保留恢复现场，永久清理删除数据和记录但保留固定 volume
 
 ```bash
 mise run barman-smoke

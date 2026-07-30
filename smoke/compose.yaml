@@ -3,6 +3,7 @@ name: pg-backup-smoke
 services:
   postgres:
     image: postgres:17.10
+    container_name: pg-backup-smoke-postgres
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -26,6 +27,7 @@ services:
 
   rustfs:
     image: rustfs/rustfs:latest
+    container_name: pg-backup-smoke-rustfs
     environment:
       RUSTFS_ACCESS_KEY: pgbackupsmoke
       RUSTFS_SECRET_KEY: ChangeMe123!
@@ -35,6 +37,7 @@ services:
       - rustfs-data:/data
 
   barman-edge:
+    container_name: pg-backup-smoke-barman-edge
     build:
       context: ../barman
     init: true
@@ -57,8 +60,14 @@ services:
     volumes:
       - barman-edge-data:/var/lib/barman
       - ./config/edge:/etc/barman.d:ro
+      - type: bind
+        source: ${SMOKE_RESTORE_ROOT:?SMOKE_RESTORE_ROOT must be set}
+        target: /restore
+        bind:
+          create_host_path: false
 
   barman-offsite:
+    container_name: pg-backup-smoke-barman-offsite
     build:
       context: ../barman
     init: true
@@ -75,6 +84,11 @@ services:
     volumes:
       - barman-offsite-data:/var/lib/barman
       - ./config/offsite:/etc/barman.d:ro
+      - type: bind
+        source: ${SMOKE_RESTORE_ROOT:?SMOKE_RESTORE_ROOT must be set}
+        target: /restore
+        bind:
+          create_host_path: false
 
 volumes:
   barman-edge-data:
@@ -83,6 +97,7 @@ volumes:
 
 networks:
   default:
+    name: ${SMOKE_NETWORK_NAME:-pg-backup-smoke-net}
     ipam:
       config:
         - subnet: 172.16.255.0/24

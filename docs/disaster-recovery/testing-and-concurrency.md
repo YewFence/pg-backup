@@ -48,6 +48,8 @@ smoke 还必须验证：
 
 smoke 只使用 `/tmp` 下的隔离恢复根目录，以及测试专用的容器、volume、网络和 Compose project 名称。测试不得读取、创建、修改或删除 `/srv/native-docker` 下的生产与人工恢复路径。生产默认名称是运行时协议；测试通过明确注入的测试配置覆盖名称，不能依靠随机发现宿主机现有容器。
 
+当前 smoke 会先让独立进程通过生产使用的同一个 `exclusive_operation_lock` 以 offsite restore 身份持有测试恢复槽，再发起完整 edge `restore` 命令，断言它立即失败且没有创建 `restore.json`、`.restore.json.tmp` 或 `barman-restore.log`，随后才继续执行正常 edge 恢复。这样不依赖两次快速测试恢复恰好重叠的竞态，也能确定性验证两条路径共享同一把内核锁。
+
 ### 恢复、启动与清理共享本机排他锁
 
 固定恢复槽是单主机排他资源。恢复、启动临时 PostgreSQL 和清理 task 都必须先使用 Python 标准库 `fcntl.flock` 获取同一把排他锁，并一直持有到本次操作结束：

@@ -61,12 +61,19 @@ mise 在 start 前自动执行 `barman:restore:permissions`。用户也可以单
 
 ### 恢复产物必须自包含所需 WAL
 
-所有 Barman 文件恢复显式使用 `--no-get-wal`，不依赖 server 配置的默认值：
+所有 Barman 文件恢复仍显式使用 `--no-get-wal`，不依赖 server 配置的默认值。offsite 本地 WAL 由 Barman 直接复制到恢复结果；Barman 3.19 对云 `wals_directory` 会忽略该意图并强制启用 get-wal，因此 edge 需要额外的物化阶段：
 
 ```text
 barman restore --no-get-wal ...
     ↓
-基础备份与恢复目标所需 WAL 一并写入恢复结果
+读取 barman list-files --target wal 清单并检查文件名与时间线内连续性
+    ↓
+本地 WAL：核验 Barman 写入的 barman_wal
+云 WAL：逐个执行 barman cloud-wal-restore 写入 barman_wal
+    ↓
+核验实际文件与大小
+    ↓
+把 restore_command 改写为从 PGDATA/barman_wal 本地 cp
     ↓
 restore.json 标记文件恢复 completed
     ↓
@@ -75,13 +82,13 @@ restore.json 标记文件恢复 completed
 permissions/start 不再访问 Barman
 ```
 
-恢复结果生成的 PostgreSQL recovery 配置不得调用 `barman get-wal`、`barman-wal-restore` 或其他目标 PostgreSQL 镜像中不存在的 Barman 工具。临时 PostgreSQL 镜像不安装 Barman CLI，也不需要连接 Barman 容器所在网络。
+恢复结果生成的 PostgreSQL recovery 配置不得调用 `barman get-wal`、`barman-wal-restore`、`barman cloud-wal-restore` 或其他目标 PostgreSQL 镜像中不存在的 Barman 工具。最终配置固定从 `/var/lib/postgresql/data/barman_wal/%f` 复制 WAL；临时 PostgreSQL 镜像不安装 Barman CLI，也不需要连接 Barman 容器所在网络。
 
 指定时间所需 WAL 不完整时，Barman 文件恢复阶段必须失败并保留现场，不能把一个已知不完整的恢复结果标记为 completed，再把问题推迟到脱离 Barman 的 start 阶段。
 
 这个选择会增加恢复目录中的临时 WAL 空间占用，换取恢复产物可搬运、可离线启动，以及 permissions/start 不依赖 Barman 容器、catalog、凭据或网络的明确边界。
 
-当前 `barman-edge/README.md` 中“云端 WAL 恢复会自动使用 get-wal”的表述与该设计冲突，实现时必须删除或改成显式 no-get-wal 的自包含恢复说明。
+Barman 3.19 强制 cloud get-wal 是已确认的上游版本行为，不能仅靠 `--no-get-wal` 关闭。工具只在文件恢复阶段借用常驻 Barman 容器的云配置与凭据完成物化；物化成功后的恢复结果不再依赖云端。
 
 ### 第一版拒绝用户自定义 tablespace
 
@@ -149,6 +156,8 @@ barman check-backup <server> <backup-id>
 ```
 
 指定时间模式验证从所选基础备份结束位置到目标时间所需 WAL 的连续性。最新模式只验证开始恢复时 catalog 已知范围内的连续性，并记录当时可见的最后 WAL；不承诺恢复期间新接收 WAL 的后续连续性。
+
+指定时间模式还从 Barman xlogdb 读取 WAL 归档时间，要求清单中最后一个 WAL 的归档时间不早于目标时间。这个检查是 catalog 级的最低覆盖边界，用于在写入前拒绝显然尚未归档到目标时刻的恢复计划；它不等同于证明某个事务提交时间已经越过目标，也不替代 PostgreSQL 启动后的 recovery target、promote、日志和 SQL 验证。
 
 恢复工具不得把以下项目作为允许恢复的前置条件：
 
@@ -260,6 +269,8 @@ PostgreSQL 容器启动   成功、失败或未请求
 文件使用 mode `0600` 并归宿主机操作者所有。容器 root 打开现有日志文件与 `.barman-restore.lock`，再通过 `gosu barman` 执行 restore。Barman stdout/stderr 同时实时显示在前端并写入日志；Python、SSH 或终端断开后，容器内进程仍继续向该日志写入。
 
 日志记录恢复计划摘要、server、备份 ID、阶段和 Barman 输出，不记录 AWS 环境变量、`.pgpass` 内容或其他凭据。日志上限为 50 MiB；超过上限时保留开头的恢复计划与末尾的结果或错误信息，不能因日志无限增长挤占恢复空间。
+
+edge 云 WAL 物化和 recovery 配置改写也会继续追加这份日志，因此工具在这些阶段退出时无论成功或失败都会再次执行 50 MiB 截断，确保最终保留的现场日志仍满足同一上限。
 
 `restore.json` 只保存结构化状态与 `barman-restore.log` 的相对路径，不复制大段命令输出。日志存在即属于恢复现场，会阻止新的 restore 覆盖；默认清理保留，永久删除时与其他恢复产物一起删除。
 

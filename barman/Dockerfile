@@ -37,9 +37,9 @@ RUN apt-get update && \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=uv /uv /usr/local/bin/uv
-RUN uv pip install \
+RUN --mount=type=cache,target=/root/.cache/uv \
+    UV_HTTP_TIMEOUT=600 uv pip install \
     --target /usr/local/lib/python3.11/dist-packages \
-    --no-cache \
     "boto3==${BOTO3_VERSION}"
 
 # Keep the Debian package user, but make its numeric identity explicit.

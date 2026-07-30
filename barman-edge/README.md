@@ -34,4 +34,4 @@ mise run barman:restore -- \
   --yes
 ```
 
-所有文件恢复都显式使用 `--no-get-wal`，把启动所需 WAL 写入隔离的恢复结果；后续权限转换和临时 PostgreSQL 启动不再依赖 Barman、S3 凭据或网络。恢复工具不会替换生产 `PGDATA`。
+恢复命令显式使用 `--no-get-wal`。Barman 3.19 对云 WAL 会强制启用 get-wal，因此统一工具随后读取 WAL 清单，通过当前容器的 `cloud-wal-restore` 把 WAL 物化到隔离恢复结果，并把 PostgreSQL 配置改写为只读取 PGDATA 内的本地 WAL。后续权限转换和临时 PostgreSQL 启动不再依赖 Barman、S3 凭据或网络；恢复工具不会替换生产 `PGDATA`。

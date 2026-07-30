@@ -13,6 +13,7 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -21,8 +22,12 @@ DONE_STATUSES = {"DONE", "COMPLETED"}
 POSTGRES_LOG_LIMIT = 10 * 1024 * 1024
 BARMAN_LOG_LIMIT = 50 * 1024 * 1024
 TOOL_VERSION = 1
+DEFAULT_WAL_SEGMENT_SIZE = 16 * 1024 * 1024
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RESTORE_COMPOSE_FILE = REPO_ROOT / "postgres-restore" / "compose.yaml"
+WAL_SEGMENT_PATTERN = re.compile(r"^[0-9A-F]{24}$")
+WAL_HISTORY_PATTERN = re.compile(r"^[0-9A-F]{8}\.history$")
+WAL_BACKUP_PATTERN = re.compile(r"^[0-9A-F]{24}\.[0-9A-F]{8}\.backup$")
 
 
 class RecoveryError(RuntimeError):
@@ -59,6 +64,21 @@ class SpaceEstimate:
     required: int
     available: int
     complete: bool
+
+
+@dataclass(frozen=True)
+class WalInventory:
+    names: tuple[str, ...]
+    wal_segment_size: int
+    estimated_size: int
+
+    @property
+    def segment_names(self) -> tuple[str, ...]:
+        return tuple(name for name in self.names if WAL_SEGMENT_PATTERN.fullmatch(name))
+
+    @property
+    def last_segment(self) -> str | None:
+        return self.segment_names[-1] if self.segment_names else None
 
 
 @dataclass(frozen=True)
@@ -203,9 +223,6 @@ def validate_completed_restore(config: RuntimeConfig) -> tuple[dict[str, Any], P
     data_path = config.restore_root / "data"
     if data_path.is_symlink() or not data_path.is_dir():
         raise RecoveryError(f"恢复数据路径必须是已存在的真实目录: {data_path}")
-    pg_version = data_path / "PG_VERSION"
-    if pg_version.is_symlink() or not pg_version.is_file():
-        raise RecoveryError(f"恢复数据中缺少可识别的 PG_VERSION: {pg_version}")
     return record, data_path
 
 
@@ -442,7 +459,7 @@ def choose_barman_container(
 
 
 def list_barman_servers(docker: DockerCLI, container: str) -> list[str]:
-    payload = docker_exec_json(docker, container, ["barman", "-f", "json", "list-servers", "all"])
+    payload = docker_exec_json(docker, container, ["barman", "-f", "json", "list-servers"])
     return parse_server_names(payload)
 
 
@@ -481,10 +498,249 @@ def _find_json_field(value: Any, names: set[str]) -> Any:
     return None
 
 
-def last_catalog_wal(docker: DockerCLI, container: str, server: str) -> str | None:
-    payload = docker_exec_json(docker, container, ["barman", "-f", "json", "show-server", server])
-    value = _find_json_field(payload, {"last_wal", "last_archived_wal", "last-wal"})
-    return value if isinstance(value, str) else None
+def parse_wal_inventory(output: str, *, wal_segment_size: int) -> WalInventory:
+    if (
+        wal_segment_size < 1024 * 1024
+        or wal_segment_size > GIB
+        or wal_segment_size & (wal_segment_size - 1)
+        or (2**32) % wal_segment_size != 0
+    ):
+        raise RecoveryError(f"Barman 返回了无效的 WAL segment size: {wal_segment_size}")
+
+    names: list[str] = []
+    seen: set[str] = set()
+    for line in output.splitlines():
+        path = line.strip()
+        if not path:
+            continue
+        name = path.rstrip("/").rsplit("/", 1)[-1]
+        if not any(
+            pattern.fullmatch(name)
+            for pattern in (WAL_SEGMENT_PATTERN, WAL_HISTORY_PATTERN, WAL_BACKUP_PATTERN)
+        ):
+            raise RecoveryError(f"Barman WAL 清单包含无法识别的文件名: {name!r}")
+        if name in seen:
+            raise RecoveryError(f"Barman WAL 清单包含重复文件名: {name}")
+        seen.add(name)
+        names.append(name)
+    if not names:
+        raise RecoveryError("Barman WAL 清单为空，无法生成自包含恢复结果")
+
+    segments_per_log = (2**32) // wal_segment_size
+    by_timeline: dict[int, list[tuple[int, str]]] = {}
+    for name in names:
+        if not WAL_SEGMENT_PATTERN.fullmatch(name):
+            continue
+        timeline = int(name[:8], 16)
+        log = int(name[8:16], 16)
+        segment = int(name[16:24], 16)
+        if segment >= segments_per_log:
+            raise RecoveryError(f"WAL 文件名与 segment size 不兼容: {name}")
+        by_timeline.setdefault(timeline, []).append((log * segments_per_log + segment, name))
+    for timeline, entries in by_timeline.items():
+        ordered = sorted(entries)
+        for previous, current in pairwise(ordered):
+            if current[0] != previous[0] + 1:
+                raise RecoveryError(
+                    f"Barman WAL 清单在 timeline {timeline:08X} 上不连续: "
+                    f"{previous[1]} -> {current[1]}"
+                )
+
+    return WalInventory(
+        names=tuple(names),
+        wal_segment_size=wal_segment_size,
+        estimated_size=len(names) * wal_segment_size,
+    )
+
+
+def barman_wal_segment_size(server_details: Any) -> int:
+    value = _find_json_field(
+        server_details,
+        {"xlog_segment_size", "wal_segment_size", "xlog-segment-size"},
+    )
+    if value is None:
+        return DEFAULT_WAL_SEGMENT_SIZE
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise RecoveryError(f"Barman WAL segment size 不是有效字节数: {value!r}") from exc
+
+
+def barman_uses_cloud_wal(server_details: Any) -> bool:
+    value = _find_json_field(server_details, {"wals_directory", "wals-directory"})
+    return isinstance(value, str) and "://" in value
+
+
+def list_barman_wal_inventory(
+    docker: DockerCLI,
+    container: str,
+    server: str,
+    backup_id: str,
+    *,
+    wal_segment_size: int,
+) -> WalInventory:
+    process = docker.run(
+        [
+            "exec",
+            container,
+            "barman",
+            "list-files",
+            server,
+            backup_id,
+            "--target",
+            "wal",
+        ]
+    )
+    return parse_wal_inventory(process.stdout or "", wal_segment_size=wal_segment_size)
+
+
+def barman_wal_archive_times(
+    docker: DockerCLI, container: str, server_name: str
+) -> dict[str, datetime]:
+    script = (
+        "import json, sys\n"
+        "from barman.config import Config\n"
+        "from barman.infofile import WalFileInfo\n"
+        "from barman.server import Server\n"
+        "config = Config()\n"
+        "config.load_configuration_files_directory()\n"
+        "server_config = config.get_server(sys.argv[1])\n"
+        "if server_config is None:\n"
+        "    raise SystemExit('unknown Barman server')\n"
+        "server = Server(server_config)\n"
+        "try:\n"
+        "    with server.xlogdb() as catalog:\n"
+        "        entries = [WalFileInfo.from_xlogdb_line(line) for line in catalog]\n"
+        "    print(json.dumps({entry.name: entry.time for entry in entries}))\n"
+        "finally:\n"
+        "    server.close()\n"
+    )
+    payload = docker_exec_json(docker, container, ["python3", "-c", script, server_name])
+    if not isinstance(payload, dict):
+        raise RecoveryError("Barman xlogdb 没有返回有效的 WAL 归档时间")
+    result: dict[str, datetime] = {}
+    for name, timestamp in payload.items():
+        if not isinstance(name, str) or not isinstance(timestamp, (int, float)):
+            raise RecoveryError("Barman xlogdb 包含无法识别的 WAL 归档时间")
+        result[name] = datetime.fromtimestamp(timestamp, UTC)
+    return result
+
+
+def validate_target_wal_coverage(
+    target: TargetTime | None,
+    inventory: WalInventory,
+    archive_times: Mapping[str, datetime],
+) -> None:
+    if target is None:
+        return
+    last_segment = inventory.last_segment
+    if last_segment is None:
+        raise RecoveryError("Barman WAL 清单没有可用于目标时间恢复的 segment")
+    archived_at = archive_times.get(last_segment)
+    if archived_at is None:
+        raise RecoveryError(f"Barman xlogdb 缺少最后 WAL 的归档时间: {last_segment}")
+    if archived_at < target.value:
+        raise RecoveryError(
+            f"Barman WAL 尚未覆盖目标时间: 最后 WAL {last_segment} "
+            f"归档于 {archived_at.astimezone(UTC).isoformat()}"
+        )
+
+
+def materialize_cloud_wals(
+    docker: DockerCLI,
+    *,
+    container: str,
+    server: str,
+    inventory: WalInventory,
+) -> None:
+    docker.run(
+        [
+            "exec",
+            "--user",
+            "root",
+            container,
+            "sh",
+            "-ec",
+            "install -d -m 700 -o barman -g barman /restore/data/barman_wal",
+        ]
+    )
+    shell = (
+        "flock -n /restore/.barman-restore.lock "
+        'gosu barman barman cloud-wal-restore "$1" "$2" '
+        '"/restore/data/barman_wal/$2" 2>&1 | tee -a /restore/barman-restore.log'
+    )
+    for name in inventory.names:
+        process = docker.run(
+            [
+                "exec",
+                "--user",
+                "root",
+                container,
+                "bash",
+                "-o",
+                "pipefail",
+                "-c",
+                shell,
+                "barman-cloud-wal",
+                server,
+                name,
+            ],
+            check=False,
+            capture=False,
+        )
+        if process.returncode != 0:
+            raise RecoveryError(f"云 WAL 物化失败: {name}，退出码 {process.returncode}")
+
+
+def inspect_materialized_wals(
+    docker: DockerCLI, *, container: str, inventory: WalInventory
+) -> tuple[int, dict[str, int]]:
+    script = (
+        "import json\n"
+        "from pathlib import Path\n"
+        "root = Path('/restore/data/barman_wal')\n"
+        "print(json.dumps({p.name: p.stat().st_size for p in root.iterdir() if p.is_file()}))\n"
+    )
+    payload = docker_exec_json(docker, container, ["python3", "-c", script])
+    if not isinstance(payload, dict) or not all(
+        isinstance(name, str) and isinstance(size, int) and size >= 0
+        for name, size in payload.items()
+    ):
+        raise RecoveryError("无法读取物化 WAL 文件清单")
+    missing = [name for name in inventory.names if name not in payload]
+    if missing:
+        raise RecoveryError("恢复结果缺少物化 WAL: " + ", ".join(missing[:10]))
+    sizes = {name: payload[name] for name in inventory.names}
+    return sum(sizes.values()), sizes
+
+
+def rewrite_recovery_config(docker: DockerCLI, *, container: str) -> str:
+    script = (
+        "import os, re\n"
+        "from pathlib import Path\n"
+        "path = Path('/restore/data/postgresql.auto.conf')\n"
+        "lines = path.read_text(encoding='utf-8').splitlines()\n"
+        "setting = re.compile(r'^\\s*(restore_command|recovery_end_command)\\s*=')\n"
+        "lines = [line for line in lines if not setting.match(line)]\n"
+        "lines.extend([\n"
+        "    \"restore_command = 'cp /var/lib/postgresql/data/barman_wal/%f %p'\",\n"
+        "    \"recovery_end_command = 'rm -rf /var/lib/postgresql/data/barman_wal'\",\n"
+        "])\n"
+        "temporary = path.with_name('.postgresql.auto.conf.tmp')\n"
+        "temporary.write_text('\\n'.join(lines) + '\\n', encoding='utf-8')\n"
+        "os.chmod(temporary, 0o600)\n"
+        "os.replace(temporary, path)\n"
+        "print(path.read_text(encoding='utf-8'), end='')\n"
+    )
+    return docker.run(["exec", "--user", "barman", container, "python3", "-c", script]).stdout
+
+
+def validate_self_contained_recovery_config(content: str) -> None:
+    if re.search(r"\b(?:cloud-wal-restore|barman-wal-restore|barman\s+get-wal)\b", content):
+        raise RecoveryError("恢复配置仍然依赖外部 Barman WAL 命令")
+    expected = "restore_command = 'cp /var/lib/postgresql/data/barman_wal/%f %p'"
+    if expected not in {line.strip() for line in content.splitlines()}:
+        raise RecoveryError("恢复配置没有使用固定 PGDATA 内的本地 WAL 路径")
 
 
 def validate_production_volume_if_present(
@@ -571,6 +827,9 @@ def _restore_record(
     target: TargetTime | None,
     estimate: SpaceEstimate,
     last_wal: str | None,
+    wal_inventory: WalInventory,
+    wal_source: str,
+    last_wal_archived_at: datetime | None,
 ) -> dict[str, Any]:
     version = backup.postgres_version or "unknown"
     major = postgres_major(version) if version != "unknown" else None
@@ -594,6 +853,18 @@ def _restore_record(
         "wal_replay_status": "not_started",
         "writable": False,
         "last_wal_at_start": last_wal,
+        "last_wal_archived_at_start": (
+            last_wal_archived_at.astimezone(UTC).isoformat()
+            if last_wal_archived_at is not None
+            else None
+        ),
+        "wal_materialization": {
+            "source": wal_source,
+            "wal_segment_size": wal_inventory.wal_segment_size,
+            "estimated_size": wal_inventory.estimated_size,
+            "actual_size": None,
+            "files": list(wal_inventory.names),
+        },
         "started_at": now_text(),
         "barman_log": "barman-restore.log",
         "space_estimate": {
@@ -693,12 +964,27 @@ def command_restore(arguments: argparse.Namespace, environment: Mapping[str, str
     selected = backup_details(docker, container, server, selected)
     validate_no_custom_tablespaces(selected.tablespaces)
     docker.run(["exec", container, "barman", "check-backup", server, selected.backup_id])
+    server_details = docker_exec_json(
+        docker, container, ["barman", "-f", "json", "show-server", server]
+    )
+    wal_segment_size = barman_wal_segment_size(server_details)
+    wal_inventory = list_barman_wal_inventory(
+        docker,
+        container,
+        server,
+        selected.backup_id,
+        wal_segment_size=wal_segment_size,
+    )
+    wal_archive_times = barman_wal_archive_times(docker, container, server)
+    validate_target_wal_coverage(target, wal_inventory, wal_archive_times)
+    cloud_wal = barman_uses_cloud_wal(server_details)
     if selected.cluster_size is None:
         raise RecoveryError("Barman 备份详情缺少 cluster size，无法执行保守磁盘空间检查")
     estimate = estimate_required_space(
         cluster_size=selected.cluster_size,
-        wal_size=selected.wal_size,
+        wal_size=wal_inventory.estimated_size,
         available=available_bytes(data_path),
+        wal_size_complete=target is not None,
     )
     if estimate.available < estimate.required:
         shortfall = estimate.required - estimate.available
@@ -710,7 +996,8 @@ def command_restore(arguments: argparse.Namespace, environment: Mapping[str, str
         raise RecoveryError(
             "空间估算不完整；非交互模式必须显式传入 --allow-unknown-space-requirement"
         )
-    last_wal = last_catalog_wal(docker, container, server)
+    last_wal = wal_inventory.last_segment
+    last_wal_archived_at = wal_archive_times.get(last_wal) if last_wal is not None else None
     display_restore_plan(
         container=container,
         server=server,
@@ -734,7 +1021,21 @@ def command_restore(arguments: argparse.Namespace, environment: Mapping[str, str
 
     with exclusive_operation_lock(config.restore_root, "restore"):
         ensure_barman_lock_is_free(config.restore_root)
-        validate_restore_slot_empty(config.restore_root)
+        remaining_data = docker.run(
+            [
+                "exec",
+                "--user",
+                "root",
+                container,
+                "find",
+                "/restore/data",
+                "-mindepth",
+                "1",
+                "-print",
+                "-quit",
+            ]
+        ).stdout.strip()
+        validate_restore_slot_empty(config.restore_root, data_directory_empty=not remaining_data)
         if docker.container_exists(config.postgres_container):
             raise RecoveryError(
                 f"临时容器 {config.postgres_container} 已存在，请先运行 barman:restore:clean"
@@ -754,6 +1055,9 @@ def command_restore(arguments: argparse.Namespace, environment: Mapping[str, str
             target=target,
             estimate=estimate,
             last_wal=last_wal,
+            wal_inventory=wal_inventory,
+            wal_source="cloud" if cloud_wal else "local",
+            last_wal_archived_at=last_wal_archived_at,
         )
         temporary_record = config.restore_root / ".restore.json.tmp"
         atomic_write_json(
@@ -777,16 +1081,31 @@ def command_restore(arguments: argparse.Namespace, environment: Mapping[str, str
             backup_id=selected.backup_id,
             target_time=target.utc_text if target else None,
         )
+        failure_stage = "barman_restore"
         try:
             process = execute_barman_restore(docker, container=container, command=command)
             trim_file(log_path, BARMAN_LOG_LIMIT)
             if process.returncode != 0:
                 raise RecoveryError(f"Barman 文件恢复失败，退出码 {process.returncode}")
+            failure_stage = "wal_materialization"
+            if cloud_wal:
+                materialize_cloud_wals(
+                    docker,
+                    container=container,
+                    server=server,
+                    inventory=wal_inventory,
+                )
+            actual_wal_size, wal_sizes = inspect_materialized_wals(
+                docker, container=container, inventory=wal_inventory
+            )
+            failure_stage = "recovery_config"
+            recovery_config = rewrite_recovery_config(docker, container=container)
+            validate_self_contained_recovery_config(recovery_config)
         except BaseException as exc:
             record["status"] = "failed"
             record["file_restore_status"] = "failed"
             record["failed_at"] = now_text()
-            record["failure_stage"] = "barman_restore"
+            record["failure_stage"] = failure_stage
             record["error"] = str(exc)[:2000]
             atomic_write_json(
                 temporary_record,
@@ -794,6 +1113,11 @@ def command_restore(arguments: argparse.Namespace, environment: Mapping[str, str
                 temporary=config.restore_root / ".restore.json.write.tmp",
             )
             raise
+        finally:
+            trim_file(log_path, BARMAN_LOG_LIMIT)
+        wal_record = record["wal_materialization"]
+        wal_record["actual_size"] = actual_wal_size
+        wal_record["file_sizes"] = wal_sizes
         record["status"] = "completed"
         record["file_restore_status"] = "completed"
         record["completed_at"] = now_text()
@@ -809,12 +1133,31 @@ def command_restore(arguments: argparse.Namespace, environment: Mapping[str, str
     return 0
 
 
-def _record_postgres_major(record: Mapping[str, Any], data_path: Path) -> int:
-    value = record.get("postgres_major")
-    if isinstance(value, int):
-        return value
-    pg_version = (data_path / "PG_VERSION").read_text(encoding="utf-8").strip()
-    return postgres_major(pg_version)
+def _record_postgres_major(
+    record: Mapping[str, Any], docker: DockerCLI, image: str, volume_name: str
+) -> int:
+    process = docker.run(
+        [
+            "run",
+            "--rm",
+            "--entrypoint",
+            "sh",
+            "--volume",
+            f"{volume_name}:/restore-data:ro",
+            image,
+            "-ec",
+            "test -f /restore-data/PG_VERSION; cat /restore-data/PG_VERSION",
+        ]
+    )
+    pg_version = process.stdout.strip()
+    data_major = postgres_major(pg_version)
+    recorded_major = record.get("postgres_major")
+    if isinstance(recorded_major, int) and recorded_major != data_major:
+        raise RecoveryError(
+            f"restore.json 记录的 PostgreSQL 主版本为 {recorded_major}，"
+            f"PG_VERSION 实际为 {data_major}"
+        )
+    return recorded_major if isinstance(recorded_major, int) else data_major
 
 
 def command_permissions(environment: Mapping[str, str]) -> int:
@@ -832,7 +1175,7 @@ def command_permissions(environment: Mapping[str, str]) -> int:
         image = config.postgres_image
         if image is None:
             raise RecoveryError("必须通过 --postgres-image/POSTGRES_IMAGE 指定完整验证镜像")
-        expected_major = _record_postgres_major(record, data_path)
+        expected_major = _record_postgres_major(record, docker, image, config.volume_name)
         image_id, uid, gid = validate_postgres_image(docker, image, expected_major)
         permissions = record.get("permissions")
         if (
@@ -947,10 +1290,13 @@ def wait_for_postgres(docker: DockerCLI, container: str, timeout: int = 120) -> 
                 check=False,
             )
             last_output = (sql.stdout or "").strip()
-            if sql.returncode == 0 and last_output == "f":
+            if sql.returncode != 0 or last_output not in {"t", "f"}:
+                return None
+            if last_output == "f":
                 return last_output
         time.sleep(2)
-    return last_output
+    detail = f"，最后 SQL 状态为 {last_output!r}" if last_output is not None else ""
+    raise RecoveryError(f"等待临时 PostgreSQL recovery 超时（{timeout} 秒）{detail}")
 
 
 def command_start(environment: Mapping[str, str]) -> int:
@@ -970,7 +1316,7 @@ def command_start(environment: Mapping[str, str]) -> int:
         image = config.postgres_image
         if image is None:
             raise RecoveryError("必须通过 --postgres-image/POSTGRES_IMAGE 指定完整验证镜像")
-        expected_major = _record_postgres_major(record, data_path)
+        expected_major = _record_postgres_major(record, docker, image, config.volume_name)
         image_id, uid, gid = validate_postgres_image(docker, image, expected_major)
         permissions = record.get("permissions")
         if not isinstance(permissions, dict) or permissions.get("status") != "completed":
@@ -1107,6 +1453,18 @@ def choose_cleanup_barman(
     )
 
 
+def validated_barman_containers_for_restore_root(docker: DockerCLI, restore_root: Path) -> set[str]:
+    containers: set[str] = set()
+    for name in discover_barman_containers(docker):
+        try:
+            source = validate_barman_container(docker, name)
+        except RecoveryError:
+            continue
+        if source == restore_root:
+            containers.add(name)
+    return containers
+
+
 def command_clean(arguments: argparse.Namespace, environment: Mapping[str, str]) -> int:
     docker = DockerCLI(environment=environment)
     validate_local_docker(docker)
@@ -1151,7 +1509,9 @@ def command_clean(arguments: argparse.Namespace, environment: Mapping[str, str])
             restore_root=config.restore_root,
             interactive=interactive,
         )
-        users = _containers_using_restore_path(docker, config, {barman_container})
+        allowed_barman = validated_barman_containers_for_restore_root(docker, config.restore_root)
+        allowed_barman.add(barman_container)
+        users = _containers_using_restore_path(docker, config, allowed_barman)
         if users:
             raise RecoveryError("仍有其他容器使用恢复目录: " + ", ".join(users))
         docker.run(
@@ -1193,9 +1553,6 @@ def command_clean(arguments: argparse.Namespace, environment: Mapping[str, str])
             "postgres-restore.log",
         ):
             (config.restore_root / name).unlink(missing_ok=True)
-        data_path = config.restore_root / "data"
-        if next(data_path.iterdir(), None) is not None:
-            raise RecoveryError(f"永久清理后恢复数据目录仍然非空: {data_path}")
     print(f"已永久删除 {config.restore_root} 中的恢复产物，固定 data/ 与 volume 对象保留。")
     return 0
 
@@ -1275,18 +1632,37 @@ def _read_size(item: dict[str, Any], *names: str) -> int | None:
     return None
 
 
+def _backup_time(item: dict[str, Any], name: str) -> datetime | None:
+    timestamp = item.get(f"{name}_timestamp")
+    if isinstance(timestamp, (str, int, float)):
+        try:
+            return datetime.fromtimestamp(int(timestamp), UTC)
+        except (ValueError, OSError, OverflowError):
+            pass
+    value = item.get(name) or item.get(name.replace("_", "-"))
+    if not isinstance(value, str):
+        return None
+    try:
+        return parse_datetime(value)
+    except RecoveryError:
+        try:
+            return datetime.strptime(value, "%a %b %d %H:%M:%S %Y").replace(tzinfo=UTC)
+        except ValueError as exc:
+            raise RecoveryError(f"无法解析 Barman 备份时间: {value!r}") from exc
+
+
 def parse_backup_payload(payload: Any) -> list[Backup]:
     backups: list[Backup] = []
     for item in _unwrap_backup_payload(payload):
         backup_id = item.get("backup_id") or item.get("backup_name")
         status = item.get("status")
-        begin_time = item.get("begin_time") or item.get("begin-time")
-        end_time = item.get("end_time") or item.get("end-time")
+        end_time = _backup_time(item, "end_time")
+        begin_time = _backup_time(item, "begin_time") or end_time
         if (
             not isinstance(backup_id, str)
             or not isinstance(status, str)
-            or not isinstance(begin_time, str)
-            or not isinstance(end_time, str)
+            or begin_time is None
+            or end_time is None
         ):
             raise RecoveryError("Barman 备份记录缺少 backup_id、status、begin_time 或 end_time")
         tablespaces = item.get("tablespaces") or ()
@@ -1303,10 +1679,10 @@ def parse_backup_payload(payload: Any) -> list[Backup]:
             Backup(
                 backup_id=backup_id,
                 status=status.upper(),
-                begin_time=parse_datetime(begin_time),
-                end_time=parse_datetime(end_time),
-                cluster_size=_read_size(item, "cluster_size", "size", "deduplicated_size"),
-                wal_size=_read_size(item, "wal_size", "wal_bytes"),
+                begin_time=begin_time,
+                end_time=end_time,
+                cluster_size=_read_size(item, "cluster_size", "size_bytes", "deduplicated_size"),
+                wal_size=_read_size(item, "wal_size_bytes", "wal_bytes"),
                 postgres_version=item.get("version") or item.get("postgres_version"),
                 tablespaces=tablespaces,
             )
@@ -1359,7 +1735,11 @@ def volume_device_from_inspect(payload: Any) -> Path:
 
 
 def estimate_required_space(
-    *, cluster_size: int, wal_size: int | None, available: int
+    *,
+    cluster_size: int,
+    wal_size: int | None,
+    available: int,
+    wal_size_complete: bool = True,
 ) -> SpaceEstimate:
     known_size = cluster_size + (wal_size or 0)
     margin = max(GIB, math.ceil(known_size * 0.1))
@@ -1369,7 +1749,7 @@ def estimate_required_space(
         safety_margin=margin,
         required=known_size + margin,
         available=available,
-        complete=wal_size is not None,
+        complete=wal_size is not None and wal_size_complete,
     )
 
 
@@ -1486,7 +1866,9 @@ def validate_no_custom_tablespaces(tablespaces: tuple[dict[str, Any], ...]) -> N
     raise RecoveryError(f"第一版不支持用户自定义 tablespace: {details}")
 
 
-def validate_restore_slot_empty(restore_root: Path) -> None:
+def validate_restore_slot_empty(
+    restore_root: Path, *, data_directory_empty: bool | None = None
+) -> None:
     data_path = restore_root / "data"
     if data_path.is_symlink() or not data_path.is_dir():
         raise RecoveryError(f"恢复数据路径必须是已存在的真实目录: {data_path}")
@@ -1497,11 +1879,9 @@ def validate_restore_slot_empty(restore_root: Path) -> None:
         restore_root / "postgres-restore.log",
     ]
     existing = [path.name for path in artifacts if path.exists()]
-    try:
-        next(data_path.iterdir())
-    except StopIteration:
-        pass
-    else:
+    if data_directory_empty is None:
+        data_directory_empty = next(data_path.iterdir(), None) is None
+    if not data_directory_empty:
         existing.append("data/")
     if existing:
         raise RecoveryError(
