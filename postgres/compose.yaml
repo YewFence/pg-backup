@@ -3,7 +3,7 @@ name: postgres
 services:
   postgres:
     # PostgreSQL 主服务，通过流复制向独立 Barman 服务提供基础备份和 WAL。
-    image: postgres:17.10
+    image: postgres:18.4
     container_name: ${POSTGRES_CONTAINER_NAME:-postgres}
     restart: unless-stopped
     environment:
