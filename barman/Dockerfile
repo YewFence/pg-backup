@@ -8,7 +8,7 @@ FROM debian:bookworm-slim
 # renovate: datasource=deb depName=barman suite=bookworm-pgdg
 ARG BARMAN_VERSION=3.19.1-3.pgdg12+1
 # renovate: datasource=deb depName=postgresql-client-17 suite=bookworm-pgdg
-ARG POSTGRESQL_CLIENT_VERSION=17.10-1.pgdg12+1
+ARG POSTGRESQL_CLIENT_VERSION=17.11-1.pgdg12+2
 # renovate: datasource=pypi depName=boto3
 ARG BOTO3_VERSION=1.43.56
 ARG BARMAN_UID=1000
