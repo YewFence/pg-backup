@@ -6,7 +6,7 @@ FROM ghcr.io/astral-sh/uv:0.11.32 AS uv
 FROM debian:bookworm-slim
 
 # renovate: datasource=deb depName=barman suite=bookworm-pgdg
-ARG BARMAN_VERSION=3.20.0-1.pgdg12+1
+ARG BARMAN_VERSION=3.20.0-2.pgdg12+1
 # renovate: datasource=deb depName=postgresql-client-17 suite=bookworm-pgdg
 ARG POSTGRESQL_CLIENT_VERSION=17.11-1.pgdg12+2
 # renovate: datasource=pypi depName=boto3
