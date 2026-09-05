@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 # renovate: datasource=docker depName=ghcr.io/astral-sh/uv
-FROM ghcr.io/astral-sh/uv:0.11.32 AS uv
+FROM ghcr.io/astral-sh/uv:0.12.10 AS uv
 
 FROM debian:bookworm-slim
 
