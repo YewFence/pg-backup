@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.27
 
 # renovate: datasource=docker depName=ghcr.io/astral-sh/uv
 FROM ghcr.io/astral-sh/uv:0.11.32 AS uv
