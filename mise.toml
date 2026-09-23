@@ -1,6 +1,6 @@
 [tools]
 gitleaks = "latest"
-python = "3.14.6"
+python = "3.14.7"
 uv = "0.12.0"
 
 [tasks.postgres-install]
